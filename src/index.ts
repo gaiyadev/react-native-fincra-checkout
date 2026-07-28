@@ -16,11 +16,9 @@ export {
 export { FincraWebViewCheckout } from './components/FincraWebViewCheckout';
 export { FincraInlineCheckout } from './components/FincraInlineCheckout';
 
-// ── Types ──────────────────────────────────────────────────────────────────────
+// ── Primitives & Types ─────────────────────────────────────────────────────────
+export { FincraCurrency, FeeBearer } from './types';
 export type {
-  // Primitives
-  FincraCurrency,
-  FeeBearer,
   // Data models
   FincraPaymentResponse,
   FincraPaymentError,

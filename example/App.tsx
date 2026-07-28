@@ -13,6 +13,8 @@ import {
 import {
   FincraCheckout,
   FincraCheckoutHost,
+  FeeBearer,
+  FincraCurrency,
   type FincraCheckoutResult,
 } from 'react-native-fincra-checkout';
 
@@ -141,12 +143,12 @@ export default function App() {
       const result = await FincraCheckout.openInline({
         publicKey: FINCRA_SANDBOX_PUB_KEY,
         amount: 5000,
-        currency: 'NGN',
+        currency: FincraCurrency.NGN,
         customerEmail: 'customer@theiremail.com',
         customerName: 'Customer Name',
         customerPhoneNumber: '07058149795',
         reference: `ORDER-${Date.now()}`,
-        feeBearer: 'customer',
+        feeBearer: FeeBearer.Customer,
         paymentMethods: ['bank_transfer', 'card', 'payattitude', 'palmpay'],
         headerTitle: 'Secure Inline Pay',
         showCancelConfirmationDialog: true,

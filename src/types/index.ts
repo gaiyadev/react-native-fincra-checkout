@@ -7,6 +7,19 @@ import type { ReactNode } from 'react';
  * Expands the Flutter enum (ngn, kes, ugx, ghs, zar, xaf, xof) with
  * additional global currencies from the prompt spec.
  */
+export const FincraCurrency = {
+  NGN: 'NGN',
+  USD: 'USD',
+  GBP: 'GBP',
+  EUR: 'EUR',
+  GHS: 'GHS',
+  KES: 'KES',
+  ZAR: 'ZAR',
+  UGX: 'UGX',
+  XAF: 'XAF',
+  XOF: 'XOF',
+} as const;
+
 export type FincraCurrency =
   | 'NGN'
   | 'USD'
@@ -19,7 +32,13 @@ export type FincraCurrency =
   | 'XAF'
   | 'XOF';
 
-/** Who bears the Fincra processing fee. */
+export const FeeBearer = {
+  Business: 'business',
+  Customer: 'customer',
+  business: 'business',
+  customer: 'customer',
+} as const;
+
 export type FeeBearer = 'business' | 'customer';
 
 // ─── Payment Data Models ───────────────────────────────────────────────────────
