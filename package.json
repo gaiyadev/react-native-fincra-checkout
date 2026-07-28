@@ -3,15 +3,16 @@
   "version": "1.0.0",
   "description": "Production-ready React Native SDK for Fincra Checkout — WebView and Inline JavaScript modes with full TypeScript support.",
   "main": "lib/commonjs/index.js",
-  "module": "lib/module/index.js",
+  "module": "lib/commonjs/index.js",
   "types": "lib/typescript/index.d.ts",
   "react-native": "src/index.ts",
   "source": "src/index.ts",
   "exports": {
     ".": {
+      "react-native": "./src/index.ts",
       "import": {
         "types": "./lib/typescript/index.d.ts",
-        "default": "./lib/module/index.js"
+        "default": "./lib/commonjs/index.js"
       },
       "require": {
         "types": "./lib/typescript/index.d.ts",
