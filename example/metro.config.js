@@ -22,7 +22,11 @@ const exampleNodeModules = path.resolve(projectRoot, 'node_modules');
 
 const originalResolveRequest = config.resolver.resolveRequest;
 config.resolver.resolveRequest = (context, moduleName, platform) => {
-  if (modulesToForceFromExample.includes(moduleName)) {
+  const matchedModule = modulesToForceFromExample.find(
+    (mod) => moduleName === mod || moduleName.startsWith(`${mod}/`)
+  );
+
+  if (matchedModule) {
     return context.resolveRequest(
       context,
       path.resolve(exampleNodeModules, moduleName),
