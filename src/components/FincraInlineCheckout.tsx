@@ -161,7 +161,7 @@ export function FincraInlineCheckout({
           break;
       }
     },
-    [onSuccess, onFailed, onCancelled]
+    [onSuccess, onFailed, onCancelled, setIsLoading]
   );
 
   // ── Cancellation ────────────────────────────────────────────────────────────
