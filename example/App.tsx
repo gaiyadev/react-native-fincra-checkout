@@ -149,9 +149,10 @@ export default function App() {
         customerPhoneNumber: '07058149795',
         reference: `ORDER-${Date.now()}`,
         feeBearer: FeeBearer.Customer,
-        paymentMethods: ['bank_transfer', 'card', 'payattitude', 'palmpay'],
+        paymentMethods: ['card', 'bank_transfer'],
         headerTitle: 'Secure Inline Pay',
         showCancelConfirmationDialog: true,
+    
       });
 
       handleResult(result);
