@@ -19,9 +19,9 @@ import {
 } from 'react-native-fincra-checkout';
 
 // ─── Extracted Sandbox Keys (from Flutter Example) ─────────────────────────────
-const FINCRA_SANDBOX_API_KEY = 'AtiZfdWFfbaf19qFqZr6VaL2ncfu4WF4';
+const FINCRA_SANDBOX_API_KEY = 'r6VaL2ncfu4WF4';
 const FINCRA_SANDBOX_PUB_KEY =
-  'pk_test_NmE2MjM2NTcxMGVmY2RkMWRjNTAzY2ZlOjoxNDA4NTk=';
+  'pk_test_NmE2MjMGAzY';
 const CHECKOUT_PAYMENTS_URL = 'https://sandboxapi.fincra.com/checkout/payments';
 const REDIRECT_URL = 'https://myapp.com/callback';
 
