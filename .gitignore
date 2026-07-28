@@ -57,6 +57,8 @@ tmp/
 *.bak
 
 # Example app build artifacts (if added in the future)
+.expo/
+/example/.expo/
 /example/node_modules/
 /example/ios/Pods/
 /example/ios/build/
