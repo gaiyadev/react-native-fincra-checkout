@@ -20,11 +20,6 @@ describe('FincraInlineCheckout', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    jest.useFakeTimers();
-  });
-
-  afterEach(() => {
-    jest.useRealTimers();
   });
 
   test('renders header title and webview initially with inline JS', () => {
@@ -165,17 +160,22 @@ describe('FincraInlineCheckout', () => {
   });
 
   test('displays Error Recovery UI when 15-second initialization timeout expires', () => {
-    render(<FincraInlineCheckout {...defaultProps} />);
+    jest.useFakeTimers();
+    try {
+      render(<FincraInlineCheckout {...defaultProps} />);
 
-    act(() => {
-      jest.advanceTimersByTime(15000);
-    });
+      act(() => {
+        jest.advanceTimersByTime(15000);
+      });
 
-    expect(screen.getByText('Connection Error')).toBeTruthy();
-    expect(
-      screen.getByText(
-        'Fincra Checkout failed to load. Please check your internet connection.'
-      )
-    ).toBeTruthy();
+      expect(screen.getByText('Connection Error')).toBeTruthy();
+      expect(
+        screen.getByText(
+          'Fincra Checkout failed to load. Please check your internet connection.'
+        )
+      ).toBeTruthy();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
