@@ -116,6 +116,11 @@ export interface BaseCheckoutProps {
   loadingComponent?: ReactNode;
   /** Custom close icon/element for the header. */
   closeIcon?: ReactNode;
+  /** Custom error screen renderer for network/loading recovery. */
+  renderError?: (
+    error: { code: string; message: string },
+    retry: () => void
+  ) => ReactNode;
 }
 
 /** Configuration for the WebView-based checkout (backend-generated URL). */

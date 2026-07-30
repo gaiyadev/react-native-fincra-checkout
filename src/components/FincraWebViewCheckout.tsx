@@ -4,13 +4,13 @@ import {
   Alert,
   BackHandler,
   Platform,
-  SafeAreaView,
   StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import type {
   WebViewNavigation,
   WebViewErrorEvent,
@@ -55,11 +55,14 @@ export function FincraWebViewCheckout({
   showCancelConfirmationDialog = false,
   loadingComponent,
   closeIcon,
+  renderError,
   onSuccess,
   onFailed,
   onCancelled,
 }: FincraWebViewCheckoutProps) {
   const [isLoading, setIsLoading] = useState(true);
+  const [errorState, setErrorState] = useState<FincraPaymentError | null>(null);
+  const webViewRef = useRef<WebView<{}> | null>(null);
   const hasCompleted = useRef(false);
 
   // Fix #10: Stable ref for handleCancellation — the BackHandler effect
@@ -152,15 +155,15 @@ export function FincraWebViewCheckout({
   const handleError = useCallback(
     (syntheticEvent: WebViewErrorEvent): void => {
       if (hasCompleted.current) return;
-      hasCompleted.current = true;
       const { nativeEvent } = syntheticEvent;
       const err: FincraPaymentError = {
         code: String(nativeEvent.code ?? 'webview_error'),
         message: nativeEvent.description ?? 'A WebView error occurred.',
       };
-      onFailed?.(err);
+      setErrorState(err);
+      setIsLoading(false);
     },
-    [onFailed]
+    []
   );
 
   // ── HTTP error (non-completion URLs only) ───────────────────────────────────
@@ -172,6 +175,13 @@ export function FincraWebViewCheckout({
     },
     [redirectUrl, handleError]
   );
+
+  // ── Retry handler ───────────────────────────────────────────────────────────
+  const handleRetry = useCallback(() => {
+    setErrorState(null);
+    setIsLoading(true);
+    webViewRef.current?.reload();
+  }, []);
 
   // ── Navigation state change (iOS fallback) ──────────────────────────────────
   // Fix #2: guard setIsLoading — don't flip loading state after completion.
@@ -229,6 +239,7 @@ export function FincraWebViewCheckout({
       {/* ── WebView ── */}
       <View style={styles.webViewContainer}>
         <WebView
+          ref={webViewRef}
           source={{ uri: checkoutUrl }}
           style={styles.webView}
           javaScriptEnabled
@@ -250,10 +261,41 @@ export function FincraWebViewCheckout({
         />
 
         {/* ── Loading overlay ── */}
-        {isLoading && (
+        {isLoading && !errorState && (
           <View style={styles.loadingOverlay} pointerEvents="none">
             {loadingComponent ?? (
               <ActivityIndicator size="large" color="#0066FF" />
+            )}
+          </View>
+        )}
+
+        {/* ── Error Recovery overlay ── */}
+        {errorState && (
+          <View style={styles.errorOverlay}>
+            {renderError ? (
+              renderError(errorState, handleRetry)
+            ) : (
+              <View style={styles.errorContainer}>
+                <Text style={styles.errorIcon}>⚠️</Text>
+                <Text style={styles.errorTitle}>Connection Error</Text>
+                <Text style={styles.errorMessage}>{errorState.message}</Text>
+                <TouchableOpacity
+                  style={styles.retryButton}
+                  onPress={handleRetry}
+                  accessibilityRole="button"
+                  accessibilityLabel="Retry loading checkout"
+                >
+                  <Text style={styles.retryButtonText}>Retry</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.cancelButton}
+                  onPress={handleCancellation}
+                  accessibilityRole="button"
+                  accessibilityLabel="Cancel checkout"
+                >
+                  <Text style={styles.cancelButtonText}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
             )}
           </View>
         )}
@@ -312,5 +354,60 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(255,255,255,0.85)',
+  },
+  errorOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  errorContainer: {
+    alignItems: 'center',
+    maxWidth: 320,
+    width: '100%',
+  },
+  errorIcon: {
+    fontSize: 48,
+    marginBottom: 16,
+  },
+  errorTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#1F2937',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  errorMessage: {
+    fontSize: 14,
+    color: '#6B7280',
+    textAlign: 'center',
+    marginBottom: 24,
+    lineHeight: 20,
+  },
+  retryButton: {
+    backgroundColor: '#0066FF',
+    paddingVertical: 12,
+    paddingHorizontal: 32,
+    borderRadius: 8,
+    width: '100%',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  cancelButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 32,
+    width: '100%',
+    alignItems: 'center',
+  },
+  cancelButtonText: {
+    color: '#6B7280',
+    fontSize: 15,
+    fontWeight: '500',
   },
 });
