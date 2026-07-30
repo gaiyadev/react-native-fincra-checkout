@@ -71,14 +71,18 @@ export function FincraInlineCheckout({
 }: InlineCheckoutConfig) {
   const [isLoading, setIsLoading] = useState(true);
   const [errorState, setErrorState] = useState<FincraPaymentError | null>(null);
-  const webViewRef = useRef<WebView<{}> | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const webViewRef = useRef<WebView<object> | null>(null);
   const hasCompleted = useRef(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Fix #3: Memoize HTML generation — prevents WebView reload on parent re-renders.
   // The HTML is intentionally generated once per mount; payment params are immutable.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const html = useMemo(() => generateInlineHtml(paymentConfig), []);
+  const configJson = JSON.stringify(paymentConfig);
+  const html = useMemo(
+    () => generateInlineHtml(JSON.parse(configJson)),
+    [configJson]
+  );
 
   // ── 15-second init timeout ──────────────────────────────────────────────────
   useEffect(() => {
@@ -97,7 +101,6 @@ export function FincraInlineCheckout({
     return () => {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Fix #10: Stable ref for handleCancellation so the BackHandler effect
@@ -129,7 +132,7 @@ export function FincraInlineCheckout({
       setErrorState(err);
       setIsLoading(false);
     },
-    []
+    [setErrorState, setIsLoading]
   );
 
   // ── HTTP error ──────────────────────────────────────────────────────────────
@@ -144,15 +147,15 @@ export function FincraInlineCheckout({
       setErrorState(err);
       setIsLoading(false);
     },
-    []
+    [setErrorState, setIsLoading]
   );
 
   // ── Retry handler ───────────────────────────────────────────────────────────
   const handleRetry = useCallback(() => {
     setErrorState(null);
     setIsLoading(true);
-    webViewRef.current?.reload();
-  }, []);
+    setReloadKey((key) => key + 1);
+  }, [setErrorState, setIsLoading, setReloadKey]);
 
   // ── JS Bridge message handler ───────────────────────────────────────────────
   const handleMessage = useCallback(
@@ -285,6 +288,7 @@ export function FincraInlineCheckout({
       {/* ── WebView running Fincra inline JS SDK ── */}
       <View style={styles.webViewContainer}>
         <WebView
+          key={reloadKey}
           ref={webViewRef}
           // Fix #14: restrict to HTTPS + about:blank only (removed wildcard)
           originWhitelist={['https://*', 'about:blank']}

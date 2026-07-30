@@ -62,7 +62,8 @@ export function FincraWebViewCheckout({
 }: FincraWebViewCheckoutProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [errorState, setErrorState] = useState<FincraPaymentError | null>(null);
-  const webViewRef = useRef<WebView<{}> | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const webViewRef = useRef<WebView<object> | null>(null);
   const hasCompleted = useRef(false);
 
   // Fix #10: Stable ref for handleCancellation — the BackHandler effect
@@ -180,7 +181,7 @@ export function FincraWebViewCheckout({
   const handleRetry = useCallback(() => {
     setErrorState(null);
     setIsLoading(true);
-    webViewRef.current?.reload();
+    setReloadKey((key) => key + 1);
   }, []);
 
   // ── Navigation state change (iOS fallback) ──────────────────────────────────
@@ -239,6 +240,7 @@ export function FincraWebViewCheckout({
       {/* ── WebView ── */}
       <View style={styles.webViewContainer}>
         <WebView
+          key={reloadKey}
           ref={webViewRef}
           source={{ uri: checkoutUrl }}
           style={styles.webView}

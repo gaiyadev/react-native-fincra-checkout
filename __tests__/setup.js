@@ -4,13 +4,15 @@ global.__DEV__ = true;
 jest.mock('react-native-webview', () => {
   const React = require('react');
   const { View } = require('react-native');
+  const WebViewMock = React.forwardRef((props, ref) => {
+    React.useImperativeHandle(ref, () => ({
+      reload: jest.fn(),
+    }));
+    return React.createElement(View, { testID: 'mock-webview', ...props });
+  });
+  WebViewMock.displayName = 'WebView';
   return {
-    WebView: React.forwardRef((props, ref) => {
-      React.useImperativeHandle(ref, () => ({
-        reload: jest.fn(),
-      }));
-      return React.createElement(View, { testID: 'mock-webview', ...props });
-    }),
+    WebView: WebViewMock,
   };
 });
 
