@@ -18,10 +18,13 @@ import {
   type FincraCheckoutResult,
 } from 'react-native-fincra-checkout';
 
-// ─── Extracted Sandbox Keys (from Flutter Example) ─────────────────────────────
-const FINCRA_SANDBOX_API_KEY = 'VvQUTusEHMWaWzsbPngxM6p55FE4kaBT';
+// ─── Fincra Sandbox Keys (loaded from .env via EXPO_PUBLIC_ prefix) ────────────
+const FINCRA_SANDBOX_API_KEY =
+  process.env.EXPO_PUBLIC_FINCRA_SANDBOX_API_KEY ??
+  '';
 const FINCRA_SANDBOX_PUB_KEY =
-  'pk_test_NmE2MjM2NTcxMGVmY2RkMWRjNTAzY2ZlOjoxNDA4NTk=';
+  process.env.EXPO_PUBLIC_FINCRA_SANDBOX_PUB_KEY ??
+  '';
 const CHECKOUT_PAYMENTS_URL = 'https://sandboxapi.fincra.com/checkout/payments';
 const REDIRECT_URL = 'https://myapp.com/callback';
 
@@ -149,7 +152,7 @@ export default function App() {
         customerPhoneNumber: '07058149795',
         reference: `ORDER-${Date.now()}`,
         feeBearer: FeeBearer.Customer,
-        paymentMethods: ['card', 'bank_transfer'],
+        paymentMethods: ['card', 'bank_transfer','palmpay'],
         headerTitle: 'Secure Inline Pay',
         showCancelConfirmationDialog: true,
     
