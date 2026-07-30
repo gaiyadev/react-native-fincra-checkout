@@ -46,7 +46,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/fincra/react-native-fincra-checkout.git"
+    "url": "git+https://github.com/fincra/react-native-fincra-checkout.git"
   },
   "author": "Fincra",
   "license": "MIT",
