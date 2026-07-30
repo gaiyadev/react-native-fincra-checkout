@@ -19,6 +19,8 @@ A **production-ready**, **100% TypeScript** React Native SDK for [Fincra Checkou
 - ✅ **Strongly-typed result**: Discriminated union — `success | error | cancelled`
 - ✅ **URL interception**: Redirect URL prefix match + query-param fallback
 - ✅ **15-second init timeout** for the Inline mode
+- ✅ **Modern SafeAreaView** via `react-native-safe-area-context`
+- ✅ **Built-in Error Recovery & Offline Retry UI** with custom `renderError` prop support
 - ✅ **Android back button** support
 - ✅ **Cancellation confirmation dialog** (optional)
 - ✅ **XSS-safe** HTML generation (all inputs JSON-encoded)
@@ -28,9 +30,9 @@ A **production-ready**, **100% TypeScript** React Native SDK for [Fincra Checkou
 ## Installation
 
 ```bash
-npm install react-native-fincra-checkout react-native-webview
+npm install react-native-fincra-checkout react-native-webview react-native-safe-area-context
 # or
-yarn add react-native-fincra-checkout react-native-webview
+yarn add react-native-fincra-checkout react-native-webview react-native-safe-area-context
 ```
 
 ### iOS — link native modules
