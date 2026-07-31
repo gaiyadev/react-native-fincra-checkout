@@ -304,6 +304,12 @@ Tests cover `UrlHandler` (URL detection, param extraction, reference normalizati
 
 ---
 
+## Changelog
+
+See [CHANGELOG.md](./CHANGELOG.md) for a list of release notes and changes.
+
+---
+
 ## License
 
 MIT © [Fincra](https://fincra.com)
