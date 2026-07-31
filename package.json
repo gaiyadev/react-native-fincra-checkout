@@ -1,6 +1,6 @@
 {
   "name": "react-native-fincra-checkout",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Production-ready React Native SDK for Fincra Checkout — WebView and Inline JavaScript modes with full TypeScript support.",
   "main": "lib/commonjs/index.js",
   "module": "lib/commonjs/index.js",
@@ -46,14 +46,14 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/fincra/react-native-fincra-checkout.git"
+    "url": "https://github.com/gaiyadev/react-native-fincra-checkout"
   },
   "author": "Fincra",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/fincra/react-native-fincra-checkout/issues"
+    "url": "https://github.com/gaiyadev/react-native-fincra-checkout/issues"
   },
-  "homepage": "https://github.com/fincra/react-native-fincra-checkout#readme",
+  "homepage": "https://github.com/gaiyadev/react-native-fincra-checkout/blob/main/README.md",
   "peerDependencies": {
     "react": ">=17.0.0",
     "react-native": ">=0.68.0",
