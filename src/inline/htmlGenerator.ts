@@ -4,9 +4,9 @@ import type { InlineCheckoutConfig } from '../types';
 //
 // Mirrors `_generateHtml()` in flutter_fincra_checkout/lib/src/inline/inline_checkout.dart
 //
-// Security: ALL user-supplied string values are encoded via JSON.stringify(),
-// which escapes special characters and wraps in double-quotes, preventing
-// HTML/JS injection attacks (same approach as the Flutter implementation).
+// Security: the whole options object is encoded via toScriptJson() — JSON
+// plus escaping of `<`, `>`, `&`, U+2028 and U+2029 — so no input value can
+// inject JS or close the surrounding <script> element.
 
 const FINCRA_CDN_URL =
   'https://unpkg.com/@fincra-engineering/checkout@2.2.0/dist/inline.min.js';
@@ -31,6 +31,64 @@ export type InlinePaymentConfig = Pick<
   | 'paymentMethods'
 >;
 
+/** Options passed to `Fincra.initialize()` (callbacks are added in the page). */
+export interface InlineSdkOptions {
+  key: string;
+  amount: number;
+  currency: string;
+  feeBearer: string;
+  reference?: string;
+  paymentMethods?: string[];
+  customer: { name: string; email: string; phoneNumber?: string };
+}
+
+/**
+ * Builds the plain options object for `Fincra.initialize()`.
+ *
+ * Optional fields are omitted entirely when absent. `customer.phoneNumber`
+ * is optional in Fincra's API: it is trimmed, and left out when blank.
+ *
+ * Pure function — internal, not part of the package's public API.
+ */
+export function buildInlineOptions(
+  config: InlinePaymentConfig
+): InlineSdkOptions {
+  const customer: InlineSdkOptions['customer'] = {
+    name: config.customerName,
+    email: config.customerEmail,
+  };
+  const phone = config.customerPhoneNumber?.trim();
+  if (phone) customer.phoneNumber = phone;
+
+  const options: InlineSdkOptions = {
+    key: config.publicKey,
+    amount: config.amount,
+    currency: config.currency.toUpperCase(),
+    feeBearer: config.feeBearer,
+    customer,
+  };
+  if (config.reference != null) options.reference = config.reference;
+  if (config.paymentMethods != null && config.paymentMethods.length > 0) {
+    options.paymentMethods = config.paymentMethods;
+  }
+  return options;
+}
+
+/**
+ * JSON-encodes a value for embedding inside an inline `<script>` block.
+ * Besides JSON escaping, `<`, `>` and `&` are escaped so a value containing
+ * `</script>` or `<!--` cannot break out of the script element, and
+ * U+2028/U+2029 are escaped for older JS engines.
+ */
+export function toScriptJson(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
+
 /**
  * Generates the self-contained HTML page that loads the Fincra inline JS SDK,
  * initializes it with the provided config, and posts lifecycle events back to
@@ -43,25 +101,8 @@ export type InlinePaymentConfig = Pick<
  * @returns A complete HTML string to be loaded into a WebView.
  */
 export function generateInlineHtml(config: InlinePaymentConfig): string {
-  // ── Safe encoding — all string values JSON-encoded to prevent injection ──
-  const key = JSON.stringify(config.publicKey);
-  const amount = config.amount; // numeric — safe to embed directly
-  const currency = JSON.stringify(config.currency.toUpperCase());
-  const name = JSON.stringify(config.customerName);
-  const email = JSON.stringify(config.customerEmail);
-  const phone = JSON.stringify(config.customerPhoneNumber);
-  const feeBearer = JSON.stringify(config.feeBearer);
-
-  // Optional fields — only emit the JS property if the value is present
-  const referenceLine =
-    config.reference != null
-      ? `reference: ${JSON.stringify(config.reference)},`
-      : '';
-
-  const paymentMethodsLine =
-    config.paymentMethods != null && config.paymentMethods.length > 0
-      ? `paymentMethods: ${JSON.stringify(config.paymentMethods)},`
-      : '';
+  // ── Safe encoding — every value goes through toScriptJson() ──
+  const optionsJson = toScriptJson(buildInlineOptions(config));
 
   return `<!DOCTYPE html>
 <html>
@@ -108,25 +149,14 @@ export function generateInlineHtml(config: InlinePaymentConfig): string {
       // SDK is available — signal "ready" so the host hides the loading spinner
       postToRN('ready', null);
 
-      var options = {
-        key: ${key},
-        amount: ${amount},
-        currency: ${currency},
-        ${referenceLine}
-        ${paymentMethodsLine}
-        feeBearer: ${feeBearer},
-        customer: {
-          name: ${name},
-          email: ${email},
-          phoneNumber: ${phone},
-        },
+      var options = Object.assign(${optionsJson}, {
         onClose: function() {
           postToRN('closed', null);
         },
         onSuccess: function(data) {
           postToRN('success', data);
         },
-      };
+      });
 
       Fincra.initialize(options);
     }

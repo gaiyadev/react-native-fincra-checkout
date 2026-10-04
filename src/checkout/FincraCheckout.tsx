@@ -36,6 +36,8 @@ type ModalMode = 'webview' | 'inline' | null;
 // resolveRef, not in ModalState. Keeping it here only confused readers.
 interface ModalState {
   mode: ModalMode;
+  /** Unique per open() call — used as the child `key` and to drop stale results. */
+  sessionId?: number;
   webViewConfig?: WebViewCheckoutConfig;
   inlineConfig?: InlineCheckoutConfig;
 }
@@ -80,72 +82,83 @@ export const FincraCheckoutHost = forwardRef<FincraCheckoutHostHandle>(
     const resolveRef = useRef<((result: FincraCheckoutResult) => void) | null>(
       null
     );
+    // Id of the session that may still settle; null once it has settled.
+    const activeSessionRef = useRef<number | null>(null);
+    const nextSessionIdRef = useRef(0);
 
-    // ── Resolve and dismiss ────────────────────────────────────────────────────
-    const resolve = useCallback((result: FincraCheckoutResult) => {
-      setModalState({ mode: null });
-      resolveRef.current?.(result);
-      resolveRef.current = null;
-    }, []);
+    // ── Settle and dismiss ─────────────────────────────────────────────────────
+    // Single exit point. A session settles at most once: a late callback (e.g. a
+    // bridge message after the Android back button closed the modal) is
+    // ignored, so the merchant's callbacks never fire twice.
+    const settleSession = useCallback(
+      (sessionId: number, result: FincraCheckoutResult, notify?: () => void) => {
+        if (activeSessionRef.current !== sessionId) return;
+        activeSessionRef.current = null;
+        const res = resolveRef.current;
+        resolveRef.current = null;
+        setModalState({ mode: null });
+        notify?.();
+        res?.(result);
+      },
+      [setModalState]
+    );
 
     // ── Expose imperative methods via ref ──────────────────────────────────────
-    useImperativeHandle(
-      ref,
-      () => ({
-        // Fix #1: guard against double-open — reject instead of orphaning the
-        // pending Promise and silently clobbering resolveRef.
-        _openWebView(config: WebViewCheckoutConfig): Promise<FincraCheckoutResult> {
-          if (resolveRef.current) {
-            return Promise.reject(
-              new Error(
-                '[FincraCheckout] A checkout session is already open. ' +
-                  'Await the current session before opening another.'
-              )
-            );
-          }
-          return new Promise((res) => {
-            resolveRef.current = res;
-            setModalState({ mode: 'webview', webViewConfig: config });
-          });
-        },
-        _openInline(config: InlineCheckoutConfig): Promise<FincraCheckoutResult> {
-          if (resolveRef.current) {
-            return Promise.reject(
-              new Error(
-                '[FincraCheckout] A checkout session is already open. ' +
-                  'Await the current session before opening another.'
-              )
-            );
-          }
-          return new Promise((res) => {
-            resolveRef.current = res;
-            setModalState({ mode: 'inline', inlineConfig: config });
-          });
-        },
-      }),
-      [/* resolve not needed — used via resolveRef */]
-    );
+    useImperativeHandle(ref, () => {
+      // Fix #1: guard against double-open — reject instead of orphaning the
+      // pending Promise and silently clobbering resolveRef.
+      const open = (next: Omit<ModalState, 'sessionId'>) => {
+        if (resolveRef.current) {
+          return Promise.reject(
+            new Error(
+              '[FincraCheckout] A checkout session is already open. ' +
+                'Await the current session before opening another.'
+            )
+          );
+        }
+        return new Promise<FincraCheckoutResult>((res) => {
+          const sessionId = ++nextSessionIdRef.current;
+          activeSessionRef.current = sessionId;
+          resolveRef.current = res;
+          setModalState({ ...next, sessionId });
+        });
+      };
+      return {
+        _openWebView: (config: WebViewCheckoutConfig) =>
+          open({ mode: 'webview', webViewConfig: config }),
+        _openInline: (config: InlineCheckoutConfig) =>
+          open({ mode: 'inline', inlineConfig: config }),
+      };
+    }, [setModalState]);
 
     const isVisible = modalState.mode !== null;
+    const sessionId = modalState.sessionId ?? -1;
 
     // ── Shared callback builders ───────────────────────────────────────────────
-    const buildCallbacks = useCallback(
-      (config: WebViewCheckoutConfig | InlineCheckoutConfig) => ({
-        onSuccess: (response: FincraPaymentResponse) => {
-          config.onSuccess?.(response);
-          resolve({ type: 'success', response });
-        },
-        onFailed: (error: FincraPaymentError) => {
-          config.onFailed?.(error);
-          resolve({ type: 'error', error });
-        },
-        onCancelled: () => {
-          config.onCancelled?.();
-          resolve({ type: 'cancelled' });
-        },
-      }),
-      [resolve]
-    );
+    const buildCallbacks = (
+      config: WebViewCheckoutConfig | InlineCheckoutConfig
+    ) => ({
+      onSuccess: (response: FincraPaymentResponse) =>
+        settleSession(sessionId, { type: 'success', response }, () =>
+          config.onSuccess?.(response)
+        ),
+      onFailed: (error: FincraPaymentError) =>
+        settleSession(sessionId, { type: 'error', error }, () =>
+          config.onFailed?.(error)
+        ),
+      onCancelled: () =>
+        settleSession(sessionId, { type: 'cancelled' }, () =>
+          config.onCancelled?.()
+        ),
+    });
+
+    // Android hardware back (Modal intercepts it) — settles as cancelled.
+    const handleRequestClose = () => {
+      const cfg = modalState.webViewConfig ?? modalState.inlineConfig;
+      settleSession(sessionId, { type: 'cancelled' }, () =>
+        cfg?.onCancelled?.()
+      );
+    };
 
     return (
       <Modal
@@ -153,25 +166,19 @@ export const FincraCheckoutHost = forwardRef<FincraCheckoutHostHandle>(
         animationType="slide"
         presentationStyle="fullScreen"
         statusBarTranslucent
-        onRequestClose={() => {
-          // Android hardware back — treat as cancellation
-          const cfg =
-            modalState.webViewConfig ?? modalState.inlineConfig;
-          if (cfg) {
-            cfg.onCancelled?.();
-          }
-          resolve({ type: 'cancelled' });
-        }}
+        onRequestClose={handleRequestClose}
       >
         <View style={styles.fullscreen}>
           {modalState.mode === 'webview' && modalState.webViewConfig && (
             <FincraWebViewCheckout
+              key={sessionId}
               {...modalState.webViewConfig}
               {...buildCallbacks(modalState.webViewConfig)}
             />
           )}
           {modalState.mode === 'inline' && modalState.inlineConfig && (
             <FincraInlineCheckout
+              key={sessionId}
               {...modalState.inlineConfig}
               {...buildCallbacks(modalState.inlineConfig)}
             />
@@ -230,7 +237,6 @@ export function _unregisterHostRef(): void {
  *   currency: 'NGN',
  *   customerEmail: 'user@example.com',
  *   customerName: 'Jane Doe',
- *   customerPhoneNumber: '08012345678',
  *   feeBearer: 'customer',
  * });
  *

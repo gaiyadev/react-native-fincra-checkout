@@ -1,6 +1,6 @@
 {
   "name": "react-native-fincra-checkout",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Production-ready React Native SDK for Fincra Checkout — WebView and Inline JavaScript modes with full TypeScript support.",
   "main": "lib/commonjs/index.js",
   "module": "lib/commonjs/index.js",

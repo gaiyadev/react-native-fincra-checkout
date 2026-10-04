@@ -152,24 +152,71 @@ describe('parseMessage — success event data normalization', () => {
     });
   });
 
-  it('treats success event with null data as success with empty response', () => {
-    // When data is explicitly null in the message
-    const payload = { event: 'success', data: null };
-    const msg = parseMessage(JSON.stringify(payload));
-    // data is null — handled by caller, but event should still be parsed
-    expect(msg.event).toBe(FincraBridgeEvent.Success);
-    expect(msg.data).toBeUndefined();
+  // Item 7: a success without data is still a success (was reported as cancelled)
+  it('treats success event with null or missing data as success with empty references', () => {
+    for (const payload of [{ event: 'success', data: null }, { event: 'success' }]) {
+      const msg = parseMessage(JSON.stringify(payload));
+      expect(msg.event).toBe(FincraBridgeEvent.Success);
+      expect(msg.data).toEqual({
+        reference: '',
+        transactionId: '',
+        status: 'success',
+        message: undefined,
+        rawResponse: { status: 'success' },
+      });
+    }
   });
 
-  it('treats success event with non-object data (string or array) safely without crashing (Fix #23)', () => {
-    const payloadStr = { event: 'success', data: 'not-an-object' };
-    const msgStr = parseMessage(JSON.stringify(payloadStr));
-    expect(msgStr.event).toBe(FincraBridgeEvent.Success);
-    expect(msgStr.data).toBeUndefined();
+  it('treats success event with non-object data (string or array) as success without crashing', () => {
+    for (const data of ['not-an-object', ['item1', 'item2']]) {
+      const msg = parseMessage(JSON.stringify({ event: 'success', data }));
+      expect(msg.event).toBe(FincraBridgeEvent.Success);
+      expect(msg.data).toMatchObject({ reference: '', status: 'success' });
+    }
+  });
 
-    const payloadArr = { event: 'success', data: ['item1', 'item2'] };
-    const msgArr = parseMessage(JSON.stringify(payloadArr));
-    expect(msgArr.event).toBe(FincraBridgeEvent.Success);
-    expect(msgArr.data).toBeUndefined();
+  // Item 8: normalise success data
+  it('JSON-encodes nested objects and arrays instead of "[object Object]"', () => {
+    const msg = parseMessage(
+      JSON.stringify({
+        event: 'success',
+        data: {
+          reference: 'REF-007',
+          customer: { name: 'Jane', email: 'jane@example.com' },
+          methods: ['card', 'bank_transfer'],
+        },
+      })
+    );
+    const raw = (msg.data as { rawResponse: Record<string, string> }).rawResponse;
+    expect(JSON.parse(raw['customer'])).toEqual({
+      name: 'Jane',
+      email: 'jane@example.com',
+    });
+    expect(JSON.parse(raw['methods'])).toEqual(['card', 'bank_transfer']);
+  });
+
+  it('drops null values instead of producing the string "null"', () => {
+    const msg = parseMessage(
+      JSON.stringify({
+        event: 'success',
+        data: { reference: 'REF-008', customerReference: null, message: null },
+      })
+    );
+    const data = msg.data as {
+      reference: string;
+      message?: string;
+      rawResponse: Record<string, string>;
+    };
+    expect(data.reference).toBe('REF-008');
+    expect(data.message).toBeUndefined();
+    expect(data.rawResponse).not.toHaveProperty('customerReference');
+    expect(data.rawResponse).not.toHaveProperty('message');
+  });
+
+  it('sets status to "success" when status is null', () => {
+    const msg = parseMessage(
+      JSON.stringify({ event: 'success', data: { reference: 'R', status: null } })
+    );
+    expect((msg.data as { status: string }).status).toBe('success');
   });
 });

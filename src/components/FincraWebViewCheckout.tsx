@@ -10,7 +10,10 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  SafeAreaProvider,
+  SafeAreaView,
+} from 'react-native-safe-area-context';
 import type {
   WebViewNavigation,
   WebViewErrorEvent,
@@ -53,6 +56,7 @@ export function FincraWebViewCheckout({
   headerBackgroundColor = '#FFFFFF',
   headerTintColor = '#000000',
   showCancelConfirmationDialog = false,
+  showCloseButton = true,
   loadingComponent,
   closeIcon,
   renderError,
@@ -64,7 +68,30 @@ export function FincraWebViewCheckout({
   const [errorState, setErrorState] = useState<FincraPaymentError | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const webViewRef = useRef<WebView<object> | null>(null);
-  const hasCompleted = useRef(false);
+  // `settledRef`: a result (success / error / cancel) has been delivered.
+  // `isMountedRef`: late native callbacks after unmount must be ignored.
+  const settledRef = useRef(false);
+  const isMountedRef = useRef(false);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  /** True while callbacks may still update state or deliver a result. */
+  const isActive = useCallback(
+    () => isMountedRef.current && !settledRef.current,
+    []
+  );
+
+  /** Single exit point — delivers at most one result per session. */
+  const settle = useCallback((deliver: () => void) => {
+    if (!isMountedRef.current || settledRef.current) return;
+    settledRef.current = true;
+    deliver();
+  }, []);
 
   // Fix #10: Stable ref for handleCancellation — the BackHandler effect
   // always calls through this ref, never capturing a stale closure.
@@ -86,25 +113,24 @@ export function FincraWebViewCheckout({
   // ── Completion handler ──────────────────────────────────────────────────────
   const handleCompletion = useCallback(
     (url: string) => {
-      if (hasCompleted.current) return;
-      hasCompleted.current = true;
-
       const params = UrlHandler.extractResponseParams(url);
-      // Safely assume success if status is missing (matches Flutter behaviour)
-      const rawStatus = params['status']?.toLowerCase() ?? 'success';
+      // `status` or `payment_status`; missing → success (sandbox omits it).
+      // Merchants must verify every payment server-side.
+      const rawStatus = UrlHandler.extractStatus(params);
 
-      if (UrlHandler.isSuccessStatus(rawStatus)) {
-        const response = UrlHandler.parsePaymentResponse(params);
-        onSuccess?.(response);
-      } else {
-        const err: FincraPaymentError = {
-          code: rawStatus,
-          message: params['message'] ?? 'Payment failed',
-        };
-        onFailed?.(err);
-      }
+      settle(() => {
+        if (UrlHandler.isSuccessStatus(rawStatus)) {
+          onSuccess?.(UrlHandler.parsePaymentResponse(params));
+        } else {
+          const err: FincraPaymentError = {
+            code: rawStatus,
+            message: params['message'] ?? 'Payment failed',
+          };
+          onFailed?.(err);
+        }
+      });
     },
-    [onSuccess, onFailed]
+    [settle, onSuccess, onFailed]
   );
 
   // ── URL interception ────────────────────────────────────────────────────────
@@ -121,7 +147,7 @@ export function FincraWebViewCheckout({
 
   // ── Cancellation ────────────────────────────────────────────────────────────
   const handleCancellation = useCallback(() => {
-    if (hasCompleted.current) return;
+    if (!isActive()) return;
 
     if (showCancelConfirmationDialog) {
       Alert.alert(
@@ -132,49 +158,55 @@ export function FincraWebViewCheckout({
           {
             text: 'Yes',
             style: 'destructive',
-            onPress: () => {
-              if (!hasCompleted.current) {
-                hasCompleted.current = true;
-                onCancelled?.();
-              }
-            },
+            // May fire after unmount — settle() ignores it then.
+            onPress: () => settle(() => onCancelled?.()),
           },
         ]
       );
     } else {
-      hasCompleted.current = true;
-      onCancelled?.();
+      settle(() => onCancelled?.());
     }
-  }, [showCancelConfirmationDialog, onCancelled]);
+  }, [isActive, showCancelConfirmationDialog, settle, onCancelled]);
 
   // Keep the ref in sync after every render (Fix #10)
   useEffect(() => {
     handleCancellationRef.current = handleCancellation;
   });
 
-  // ── WebView error ───────────────────────────────────────────────────────────
-  const handleError = useCallback(
-    (syntheticEvent: WebViewErrorEvent): void => {
-      if (hasCompleted.current) return;
-      const { nativeEvent } = syntheticEvent;
-      const err: FincraPaymentError = {
-        code: String(nativeEvent.code ?? 'webview_error'),
-        message: nativeEvent.description ?? 'A WebView error occurred.',
-      };
+  // ── Load errors ─────────────────────────────────────────────────────────────
+  // react-native-webview only reports main-frame failures via onError /
+  // onHttpError (sub-resource errors are filtered natively). Load errors never
+  // settle the payment: they show the recoverable Retry/Cancel overlay.
+  // Errors for the redirect URL are expected (we block that navigation).
+  const showLoadError = useCallback(
+    (url: string | undefined, err: FincraPaymentError): void => {
+      if (!isActive()) return;
+      if (url && UrlHandler.isCompletionUrl(url, redirectUrl)) return;
       setErrorState(err);
       setIsLoading(false);
     },
-    []
+    [isActive, redirectUrl]
   );
 
-  // ── HTTP error (non-completion URLs only) ───────────────────────────────────
-  const handleHttpError = useCallback(
-    (e: WebViewHttpErrorEvent): void => {
-      if (!UrlHandler.isCompletionUrl(e.nativeEvent.url, redirectUrl)) {
-        handleError(e as unknown as WebViewErrorEvent);
-      }
+  const handleError = useCallback(
+    ({ nativeEvent }: WebViewErrorEvent): void => {
+      showLoadError(nativeEvent.url, {
+        code: String(nativeEvent.code ?? 'webview_error'),
+        message: nativeEvent.description ?? 'A WebView error occurred.',
+      });
     },
-    [redirectUrl, handleError]
+    [showLoadError]
+  );
+
+  const handleHttpError = useCallback(
+    ({ nativeEvent }: WebViewHttpErrorEvent): void => {
+      showLoadError(nativeEvent.url, {
+        code: String(nativeEvent.statusCode ?? 'http_error'),
+        message:
+          nativeEvent.description || `HTTP error ${nativeEvent.statusCode}`,
+      });
+    },
+    [showLoadError]
   );
 
   // ── Retry handler ───────────────────────────────────────────────────────────
@@ -188,7 +220,7 @@ export function FincraWebViewCheckout({
   // Fix #2: guard setIsLoading — don't flip loading state after completion.
   const onNavigationStateChange = useCallback(
     (navState: WebViewNavigation) => {
-      if (hasCompleted.current) return;
+      if (!isActive()) return;
       if (
         navState.url &&
         UrlHandler.isCompletionUrl(navState.url, redirectUrl)
@@ -196,7 +228,7 @@ export function FincraWebViewCheckout({
         handleCompletion(navState.url);
       }
     },
-    [redirectUrl, handleCompletion]
+    [isActive, redirectUrl, handleCompletion]
   );
 
   // ── Computed status bar style (Fix #11) ─────────────────────────────────────
@@ -204,111 +236,125 @@ export function FincraWebViewCheckout({
     headerTintColor === '#000000' ? 'dark-content' : 'light-content';
 
   // ── Render ──────────────────────────────────────────────────────────────────
+  // Own SafeAreaProvider: SafeAreaView reads insets from the nearest provider,
+  // and a Modal (FincraCheckoutHost) is a separate native tree. Without one the
+  // insets are 0 and the header sits under the status bar / Dynamic Island,
+  // where iOS swallows taps. Nested providers are fine if the app has its own.
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar
-        barStyle={statusBarStyle}
-        backgroundColor={headerBackgroundColor}
-      />
-      {/* ── Header bar ── */}
-      <View
-        style={[styles.header, { backgroundColor: headerBackgroundColor }]}
-      >
-        <TouchableOpacity
-          style={styles.closeButton}
-          onPress={handleCancellation}
-          accessibilityLabel="Close checkout"
-          accessibilityRole="button"
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        >
-          {closeIcon ?? (
-            <Text style={[styles.closeIcon, { color: headerTintColor }]}>
-              ✕
-            </Text>
-          )}
-        </TouchableOpacity>
-        <Text
-          style={[styles.headerTitle, { color: headerTintColor }]}
-          numberOfLines={1}
-        >
-          {headerTitle}
-        </Text>
-        {/* Spacer to centre the title */}
-        <View style={styles.closeButton} />
-      </View>
-
-      {/* ── WebView ── */}
-      <View style={styles.webViewContainer}>
-        <WebView
-          key={reloadKey}
-          ref={webViewRef}
-          source={{ uri: checkoutUrl }}
-          style={styles.webView}
-          javaScriptEnabled
-          domStorageEnabled
-          startInLoadingState={false}
-          onLoadStart={() => {
-            if (!hasCompleted.current) setIsLoading(true);
-          }}
-          onLoadEnd={() => {
-            if (!hasCompleted.current) setIsLoading(false);
-          }}
-          onError={handleError}
-          onHttpError={handleHttpError}
-          onShouldStartLoadWithRequest={onShouldStartLoadWithRequest}
-          onNavigationStateChange={onNavigationStateChange}
-          // Fix #14: restrict to HTTPS + about:blank — prevents intent:// and
-          // other dangerous scheme navigations in a payment context.
-          originWhitelist={['https://*', 'about:blank']}
+    <SafeAreaProvider style={styles.provider}>
+      <SafeAreaView style={styles.container}>
+        <StatusBar
+          barStyle={statusBarStyle}
+          backgroundColor={headerBackgroundColor}
         />
+        {/* ── Header bar ── */}
+        <View
+          style={[styles.header, { backgroundColor: headerBackgroundColor }]}
+        >
+          {/* Spacer keeps the title centred when the close button is hidden */}
+          {showCloseButton ? (
+            <TouchableOpacity
+              style={styles.closeButton}
+              onPress={handleCancellation}
+              accessibilityLabel="Close checkout"
+              accessibilityRole="button"
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              {closeIcon ?? (
+                <Text style={[styles.closeIcon, { color: headerTintColor }]}>
+                  ✕
+                </Text>
+              )}
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.closeButton} />
+          )}
+          <Text
+            style={[styles.headerTitle, { color: headerTintColor }]}
+            numberOfLines={1}
+          >
+            {headerTitle}
+          </Text>
+          {/* Spacer to centre the title */}
+          <View style={styles.closeButton} />
+        </View>
 
-        {/* ── Loading overlay ── */}
-        {isLoading && !errorState && (
-          <View style={styles.loadingOverlay} pointerEvents="none">
-            {loadingComponent ?? (
-              <ActivityIndicator size="large" color="#0066FF" />
-            )}
-          </View>
-        )}
+        {/* ── WebView ── */}
+        <View style={styles.webViewContainer}>
+          <WebView
+            key={reloadKey}
+            ref={webViewRef}
+            source={{ uri: checkoutUrl }}
+            style={styles.webView}
+            javaScriptEnabled
+            domStorageEnabled
+            startInLoadingState={false}
+            onLoadStart={() => {
+              if (isActive()) setIsLoading(true);
+            }}
+            onLoadEnd={() => {
+              if (isActive()) setIsLoading(false);
+            }}
+            onError={handleError}
+            onHttpError={handleHttpError}
+            onShouldStartLoadWithRequest={onShouldStartLoadWithRequest}
+            onNavigationStateChange={onNavigationStateChange}
+            // Fix #14: restrict to HTTPS + about:blank — prevents intent:// and
+            // other dangerous scheme navigations in a payment context.
+            originWhitelist={['https://*', 'about:blank']}
+          />
 
-        {/* ── Error Recovery overlay ── */}
-        {errorState && (
-          <View style={styles.errorOverlay}>
-            {renderError ? (
-              renderError(errorState, handleRetry)
-            ) : (
-              <View style={styles.errorContainer}>
-                <Text style={styles.errorIcon}>⚠️</Text>
-                <Text style={styles.errorTitle}>Connection Error</Text>
-                <Text style={styles.errorMessage}>{errorState.message}</Text>
-                <TouchableOpacity
-                  style={styles.retryButton}
-                  onPress={handleRetry}
-                  accessibilityRole="button"
-                  accessibilityLabel="Retry loading checkout"
-                >
-                  <Text style={styles.retryButtonText}>Retry</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.cancelButton}
-                  onPress={handleCancellation}
-                  accessibilityRole="button"
-                  accessibilityLabel="Cancel checkout"
-                >
-                  <Text style={styles.cancelButtonText}>Cancel</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </View>
-        )}
-      </View>
-    </SafeAreaView>
+          {/* ── Loading overlay ── */}
+          {isLoading && !errorState && (
+            <View style={styles.loadingOverlay} pointerEvents="none">
+              {loadingComponent ?? (
+                <ActivityIndicator size="large" color="#0066FF" />
+              )}
+            </View>
+          )}
+
+          {/* ── Error Recovery overlay ── */}
+          {errorState && (
+            <View style={styles.errorOverlay}>
+              {renderError ? (
+                renderError(errorState, handleRetry)
+              ) : (
+                <View style={styles.errorContainer}>
+                  <Text style={styles.errorIcon}>⚠️</Text>
+                  <Text style={styles.errorTitle}>Connection Error</Text>
+                  <Text style={styles.errorMessage}>{errorState.message}</Text>
+                  <TouchableOpacity
+                    style={styles.retryButton}
+                    onPress={handleRetry}
+                    accessibilityRole="button"
+                    accessibilityLabel="Retry loading checkout"
+                  >
+                    <Text style={styles.retryButtonText}>Retry</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.cancelButton}
+                    onPress={handleCancellation}
+                    accessibilityRole="button"
+                    accessibilityLabel="Cancel checkout"
+                  >
+                    <Text style={styles.cancelButtonText}>Cancel</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          )}
+        </View>
+      </SafeAreaView>
+    </SafeAreaProvider>
   );
 }
 
 // ─── Styles ────────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
+  provider: {
+    flex: 1,
+  },
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',

@@ -1,6 +1,7 @@
 import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react-native';
 import { Text } from 'react-native';
+import { generateInlineHtml } from '../src/inline/htmlGenerator';
 import { FincraInlineCheckout } from '../src/components/FincraInlineCheckout';
 
 describe('FincraInlineCheckout', () => {
@@ -177,5 +178,120 @@ describe('FincraInlineCheckout', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  const sendMessage = (payload: unknown) =>
+    fireEvent(screen.getByTestId('mock-webview'), 'onMessage', {
+      nativeEvent: { data: JSON.stringify(payload) },
+    });
+
+  // ── Item 5: phone number is optional ──────────────────────────────────────
+  test('renders without a phone number and leaves it out of the page', () => {
+    const { customerPhoneNumber: _omit, ...withoutPhone } = defaultProps;
+    render(<FincraInlineCheckout {...withoutPhone} />);
+
+    const { html } = screen.getByTestId('mock-webview').props.source;
+    expect(html).not.toContain('phoneNumber');
+  });
+
+  // ── Item 6: keep the error message from the bridge ───────────────────────
+  test('passes the page\'s SDK load-failure message to onFailed', () => {
+    render(<FincraInlineCheckout {...defaultProps} />);
+    const pageMessage = 'Fincra SDK failed to load. Check your internet connection.';
+    // Guard: this is the exact string the generated page posts.
+    expect(generateInlineHtml(defaultProps)).toContain(pageMessage);
+
+    sendMessage({ event: 'error', data: { message: pageMessage } });
+
+    expect(defaultProps.onFailed).toHaveBeenCalledWith({
+      code: 'fincra_sdk_error',
+      message: pageMessage,
+    });
+  });
+
+  test('falls back to a generic message when the error has no data', () => {
+    render(<FincraInlineCheckout {...defaultProps} />);
+    sendMessage({ event: 'error', data: null });
+
+    expect(defaultProps.onFailed).toHaveBeenCalledWith({
+      code: 'fincra_sdk_error',
+      message: 'An unknown error occurred',
+    });
+  });
+
+  // ── Item 7: a success without data is still a success ────────────────────
+  test('treats a success event with null data as success, not cancelled', () => {
+    render(<FincraInlineCheckout {...defaultProps} />);
+    sendMessage({ event: 'success', data: null });
+
+    expect(defaultProps.onCancelled).not.toHaveBeenCalled();
+    expect(defaultProps.onSuccess).toHaveBeenCalledWith(
+      expect.objectContaining({ reference: '', status: 'success' })
+    );
+  });
+
+  // ── Items 4 & 9: settle once; ignore late messages ───────────────────────
+  test('ignores bridge messages after the session has settled', () => {
+    render(<FincraInlineCheckout {...defaultProps} />);
+
+    fireEvent.press(screen.getByLabelText('Close checkout'));
+    sendMessage({ event: 'success', data: { reference: 'LATE' } });
+    sendMessage({ event: 'closed' });
+
+    expect(defaultProps.onCancelled).toHaveBeenCalledTimes(1);
+    expect(defaultProps.onSuccess).not.toHaveBeenCalled();
+  });
+
+  test('ignores bridge messages that arrive after unmount', () => {
+    const { unmount } = render(<FincraInlineCheckout {...defaultProps} />);
+    const { onMessage } = screen.getByTestId('mock-webview').props;
+
+    unmount();
+    onMessage({ nativeEvent: { data: JSON.stringify({ event: 'closed' }) } });
+
+    expect(defaultProps.onCancelled).not.toHaveBeenCalled();
+  });
+
+  // ── Item 10: Retry re-arms the 15s timeout ───────────────────────────────
+  test('Retry restarts the 15-second timeout', () => {
+    jest.useFakeTimers();
+    try {
+      render(<FincraInlineCheckout {...defaultProps} />);
+      act(() => {
+        jest.advanceTimersByTime(15000);
+      });
+      fireEvent.press(screen.getByText('Retry'));
+      expect(screen.queryByText('Connection Error')).toBeNull();
+
+      act(() => {
+        jest.advanceTimersByTime(15000);
+      });
+      expect(screen.getByText('Connection Error')).toBeTruthy();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('a ready event cancels the timeout', () => {
+    jest.useFakeTimers();
+    try {
+      render(<FincraInlineCheckout {...defaultProps} />);
+      sendMessage({ event: 'ready' });
+      act(() => {
+        jest.advanceTimersByTime(20000);
+      });
+      expect(screen.queryByText('Connection Error')).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('shows the header close button by default and hides it with showCloseButton={false}', () => {
+    const { rerender } = render(<FincraInlineCheckout {...defaultProps} />);
+    expect(screen.getByLabelText('Close checkout')).toBeTruthy();
+
+    rerender(<FincraInlineCheckout {...defaultProps} showCloseButton={false} />);
+    expect(screen.queryByLabelText('Close checkout')).toBeNull();
+    expect(screen.queryByText('✕')).toBeNull();
   });
 });

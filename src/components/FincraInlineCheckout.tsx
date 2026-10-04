@@ -10,7 +10,10 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  SafeAreaProvider,
+  SafeAreaView,
+} from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import type {
   WebViewMessageEvent,
@@ -48,7 +51,6 @@ const INIT_TIMEOUT_MS = 15_000;
  *   currency="NGN"
  *   customerEmail="user@example.com"
  *   customerName="John Doe"
- *   customerPhoneNumber="08012345678"
  *   feeBearer="customer"
  *   onSuccess={(res) => console.log(res.reference)}
  *   onCancelled={() => navigation.goBack()}
@@ -60,6 +62,7 @@ export function FincraInlineCheckout({
   headerBackgroundColor = '#FFFFFF',
   headerTintColor = '#000000',
   showCancelConfirmationDialog = false,
+  showCloseButton = true,
   loadingComponent,
   closeIcon,
   renderError,
@@ -73,8 +76,40 @@ export function FincraInlineCheckout({
   const [errorState, setErrorState] = useState<FincraPaymentError | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const webViewRef = useRef<WebView<object> | null>(null);
-  const hasCompleted = useRef(false);
+  // `settledRef`: a result (success / error / cancel) has been delivered.
+  // `isMountedRef`: late bridge messages after unmount must be ignored.
+  const settledRef = useRef(false);
+  const isMountedRef = useRef(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  /** True while callbacks may still update state or deliver a result. */
+  const isActive = useCallback(
+    () => isMountedRef.current && !settledRef.current,
+    []
+  );
+
+  const clearInitTimeout = useCallback(() => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = null;
+  }, []);
+
+  /** Single exit point — delivers at most one result per session. */
+  const settle = useCallback(
+    (deliver: () => void) => {
+      if (!isMountedRef.current || settledRef.current) return;
+      settledRef.current = true;
+      clearInitTimeout();
+      deliver();
+    },
+    [clearInitTimeout]
+  );
 
   // Fix #3: Memoize HTML generation — prevents WebView reload on parent re-renders.
   // The HTML is intentionally generated once per mount; payment params are immutable.
@@ -84,24 +119,21 @@ export function FincraInlineCheckout({
     [configJson]
   );
 
-  // ── 15-second init timeout ──────────────────────────────────────────────────
+  // ── 15-second init timeout (re-armed on every Retry) ────────────────────────
   useEffect(() => {
     timeoutRef.current = setTimeout(() => {
-      if (!hasCompleted.current) {
-        const err: FincraPaymentError = {
-          code: 'timeout',
-          message:
-            'Fincra Checkout failed to load. Please check your internet connection.',
-        };
-        setErrorState(err);
-        setIsLoading(false);
-      }
+      if (!isActive()) return;
+      const err: FincraPaymentError = {
+        code: 'timeout',
+        message:
+          'Fincra Checkout failed to load. Please check your internet connection.',
+      };
+      setErrorState(err);
+      setIsLoading(false);
     }, INIT_TIMEOUT_MS);
 
-    return () => {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    };
-  }, []);
+    return clearInitTimeout;
+  }, [reloadKey, isActive, clearInitTimeout]);
 
   // Fix #10: Stable ref for handleCancellation so the BackHandler effect
   // doesn't need it as a dependency and never captures a stale closure.
@@ -120,34 +152,35 @@ export function FincraInlineCheckout({
     return () => subscription.remove();
   }, []); // safe: always calls through the ref
 
-  // ── WebView error ───────────────────────────────────────────────────────────
-  const handleError = useCallback(
-    (syntheticEvent: WebViewErrorEvent): void => {
-      if (hasCompleted.current) return;
-      const { nativeEvent } = syntheticEvent;
-      const err: FincraPaymentError = {
-        code: String(nativeEvent.code ?? 'webview_error'),
-        message: nativeEvent.description ?? 'A WebView error occurred.',
-      };
+  // ── Load errors (main frame only — see FincraWebViewCheckout) ───────────────
+  const showLoadError = useCallback(
+    (err: FincraPaymentError): void => {
+      if (!isActive()) return;
+      clearInitTimeout();
       setErrorState(err);
       setIsLoading(false);
     },
-    [setErrorState, setIsLoading]
+    [isActive, clearInitTimeout, setErrorState, setIsLoading]
   );
 
-  // ── HTTP error ──────────────────────────────────────────────────────────────
+  const handleError = useCallback(
+    ({ nativeEvent }: WebViewErrorEvent): void => {
+      showLoadError({
+        code: String(nativeEvent.code ?? 'webview_error'),
+        message: nativeEvent.description ?? 'A WebView error occurred.',
+      });
+    },
+    [showLoadError]
+  );
+
   const handleHttpError = useCallback(
-    (syntheticEvent: WebViewHttpErrorEvent): void => {
-      if (hasCompleted.current) return;
-      const { nativeEvent } = syntheticEvent;
-      const err: FincraPaymentError = {
+    ({ nativeEvent }: WebViewHttpErrorEvent): void => {
+      showLoadError({
         code: String(nativeEvent.statusCode ?? 'http_error'),
         message: nativeEvent.description ?? 'A WebView HTTP error occurred.',
-      };
-      setErrorState(err);
-      setIsLoading(false);
+      });
     },
-    [setErrorState, setIsLoading]
+    [showLoadError]
   );
 
   // ── Retry handler ───────────────────────────────────────────────────────────
@@ -158,47 +191,42 @@ export function FincraInlineCheckout({
   }, [setErrorState, setIsLoading, setReloadKey]);
 
   // ── JS Bridge message handler ───────────────────────────────────────────────
+  // Messages that arrive after the session settled (e.g. closed via the
+  // Android back button) or after unmount are ignored.
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
-      if (hasCompleted.current) return;
+      if (!isActive()) return;
 
       const msg = parseMessage(event.nativeEvent.data);
 
       switch (msg.event) {
         case FincraBridgeEvent.Ready:
           // SDK loaded — clear timeout and hide the loading spinner
-          if (timeoutRef.current) clearTimeout(timeoutRef.current);
+          clearInitTimeout();
           setIsLoading(false);
           break;
 
-        case FincraBridgeEvent.Success:
-          hasCompleted.current = true;
-          if (timeoutRef.current) clearTimeout(timeoutRef.current);
-          if (msg.data && 'reference' in msg.data) {
-            onSuccess?.(msg.data as FincraPaymentResponse);
-          } else {
-            onCancelled?.();
-          }
+        case FincraBridgeEvent.Success: {
+          // Always a success, even without data (empty references).
+          const response = msg.data as FincraPaymentResponse;
+          settle(() => onSuccess?.(response));
           break;
+        }
 
         case FincraBridgeEvent.Closed:
-          hasCompleted.current = true;
-          if (timeoutRef.current) clearTimeout(timeoutRef.current);
-          onCancelled?.();
+          settle(() => onCancelled?.());
           break;
 
         case FincraBridgeEvent.Error: {
-          hasCompleted.current = true;
-          if (timeoutRef.current) clearTimeout(timeoutRef.current);
           const errorMessage =
-            msg.data && 'message' in msg.data
-              ? (msg.data as { message: string }).message
+            msg.data && 'message' in msg.data && msg.data.message
+              ? msg.data.message
               : 'An unknown error occurred';
           const err: FincraPaymentError = {
             code: 'fincra_sdk_error',
             message: errorMessage,
           };
-          onFailed?.(err);
+          settle(() => onFailed?.(err));
           break;
         }
 
@@ -208,13 +236,21 @@ export function FincraInlineCheckout({
           break;
       }
     },
-    [onSuccess, onFailed, onCancelled, setIsLoading]
+    [
+      isActive,
+      clearInitTimeout,
+      settle,
+      setIsLoading,
+      onSuccess,
+      onFailed,
+      onCancelled,
+    ]
   );
 
   // ── Cancellation ────────────────────────────────────────────────────────────
   // Fix #4: Use static Alert import — no dynamic require() needed.
   const handleCancellation = useCallback(() => {
-    if (hasCompleted.current) return;
+    if (!isActive()) return;
 
     if (showCancelConfirmationDialog) {
       Alert.alert(
@@ -225,22 +261,15 @@ export function FincraInlineCheckout({
           {
             text: 'Yes',
             style: 'destructive',
-            onPress: () => {
-              if (!hasCompleted.current) {
-                hasCompleted.current = true;
-                if (timeoutRef.current) clearTimeout(timeoutRef.current);
-                onCancelled?.();
-              }
-            },
+            // May fire after unmount — settle() ignores it then.
+            onPress: () => settle(() => onCancelled?.()),
           },
         ]
       );
     } else {
-      hasCompleted.current = true;
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      onCancelled?.();
+      settle(() => onCancelled?.());
     }
-  }, [showCancelConfirmationDialog, onCancelled]);
+  }, [isActive, showCancelConfirmationDialog, settle, onCancelled]);
 
   // Keep the ref in sync with the latest handleCancellation (Fix #10)
   useEffect(() => {
@@ -252,105 +281,116 @@ export function FincraInlineCheckout({
     headerTintColor === '#000000' ? 'dark-content' : 'light-content';
 
   // ── Render ──────────────────────────────────────────────────────────────────
+  // Own SafeAreaProvider: SafeAreaView reads insets from the nearest provider,
+  // and a Modal (FincraCheckoutHost) is a separate native tree. Without one the
+  // insets are 0 and the header sits under the status bar / Dynamic Island,
+  // where iOS swallows taps. Nested providers are fine if the app has its own.
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar
-        barStyle={statusBarStyle}
-        backgroundColor={headerBackgroundColor}
-      />
-
-      {/* ── Header bar — shown during loading so the user can abort ── */}
-      <View
-        style={[styles.header, { backgroundColor: headerBackgroundColor }]}
-      >
-        <TouchableOpacity
-          style={styles.closeButton}
-          onPress={handleCancellation}
-          accessibilityLabel="Close checkout"
-          accessibilityRole="button"
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        >
-          {closeIcon ?? (
-            <Text style={[styles.closeIcon, { color: headerTintColor }]}>
-              ✕
-            </Text>
-          )}
-        </TouchableOpacity>
-        <Text
-          style={[styles.headerTitle, { color: headerTintColor }]}
-          numberOfLines={1}
-        >
-          {headerTitle}
-        </Text>
-        <View style={styles.closeButton} />
-      </View>
-
-      {/* ── WebView running Fincra inline JS SDK ── */}
-      <View style={styles.webViewContainer}>
-        <WebView
-          key={reloadKey}
-          ref={webViewRef}
-          // Fix #14: restrict to HTTPS + about:blank only (removed wildcard)
-          originWhitelist={['https://*', 'about:blank']}
-          source={{ html }}
-          style={styles.webView}
-          javaScriptEnabled
-          domStorageEnabled
-          onMessage={handleMessage}
-          onError={handleError}
-          onHttpError={handleHttpError}
-          // Inject the ReactNativeWebView bridge shim so older WKWebView versions work
-          injectedJavaScriptBeforeContentLoaded={WEBVIEW_BRIDGE_SHIM}
-          // Allow the external CDN script to load
-          mixedContentMode="always"
-          // Fix #15: removed allowFileAccess and allowUniversalAccessFromFileURLs —
-          // the HTML is served as an inline blob, not a file:// URL, so these are
-          // unnecessary and allowUniversalAccessFromFileURLs is a security footgun.
+    <SafeAreaProvider style={styles.provider}>
+      <SafeAreaView style={styles.container}>
+        <StatusBar
+          barStyle={statusBarStyle}
+          backgroundColor={headerBackgroundColor}
         />
 
-        {/* ── Loading overlay ── */}
-        {isLoading && !errorState && (
-          <View style={styles.loadingOverlay}>
-            <View style={styles.loadingCard}>
-              {loadingComponent ?? (
-                <ActivityIndicator size="large" color="#0066FF" />
+        {/* ── Header bar — shown during loading so the user can abort ── */}
+        <View
+          style={[styles.header, { backgroundColor: headerBackgroundColor }]}
+        >
+          {/* Spacer keeps the title centred when the close button is hidden */}
+          {showCloseButton ? (
+            <TouchableOpacity
+              style={styles.closeButton}
+              onPress={handleCancellation}
+              accessibilityLabel="Close checkout"
+              accessibilityRole="button"
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              {closeIcon ?? (
+                <Text style={[styles.closeIcon, { color: headerTintColor }]}>
+                  ✕
+                </Text>
+              )}
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.closeButton} />
+          )}
+          <Text
+            style={[styles.headerTitle, { color: headerTintColor }]}
+            numberOfLines={1}
+          >
+            {headerTitle}
+          </Text>
+          <View style={styles.closeButton} />
+        </View>
+
+        {/* ── WebView running Fincra inline JS SDK ── */}
+        <View style={styles.webViewContainer}>
+          <WebView
+            key={reloadKey}
+            ref={webViewRef}
+            // Fix #14: restrict to HTTPS + about:blank only (removed wildcard)
+            originWhitelist={['https://*', 'about:blank']}
+            source={{ html }}
+            style={styles.webView}
+            javaScriptEnabled
+            domStorageEnabled
+            onMessage={handleMessage}
+            onError={handleError}
+            onHttpError={handleHttpError}
+            // Inject the ReactNativeWebView bridge shim so older WKWebView versions work
+            injectedJavaScriptBeforeContentLoaded={WEBVIEW_BRIDGE_SHIM}
+            // Allow the external CDN script to load
+            mixedContentMode="always"
+            // Fix #15: removed allowFileAccess and allowUniversalAccessFromFileURLs —
+            // the HTML is served as an inline blob, not a file:// URL, so these are
+            // unnecessary and allowUniversalAccessFromFileURLs is a security footgun.
+          />
+
+          {/* ── Loading overlay ── */}
+          {isLoading && !errorState && (
+            <View style={styles.loadingOverlay}>
+              <View style={styles.loadingCard}>
+                {loadingComponent ?? (
+                  <ActivityIndicator size="large" color="#0066FF" />
+                )}
+              </View>
+            </View>
+          )}
+
+          {/* ── Error Recovery overlay ── */}
+          {errorState && (
+            <View style={styles.errorOverlay}>
+              {renderError ? (
+                renderError(errorState, handleRetry)
+              ) : (
+                <View style={styles.errorContainer}>
+                  <Text style={styles.errorIcon}>⚠️</Text>
+                  <Text style={styles.errorTitle}>Connection Error</Text>
+                  <Text style={styles.errorMessage}>{errorState.message}</Text>
+                  <TouchableOpacity
+                    style={styles.retryButton}
+                    onPress={handleRetry}
+                    accessibilityRole="button"
+                    accessibilityLabel="Retry loading checkout"
+                  >
+                    <Text style={styles.retryButtonText}>Retry</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.cancelButton}
+                    onPress={handleCancellation}
+                    accessibilityRole="button"
+                    accessibilityLabel="Cancel checkout"
+                  >
+                    <Text style={styles.cancelButtonText}>Cancel</Text>
+                  </TouchableOpacity>
+                </View>
               )}
             </View>
-          </View>
-        )}
-
-        {/* ── Error Recovery overlay ── */}
-        {errorState && (
-          <View style={styles.errorOverlay}>
-            {renderError ? (
-              renderError(errorState, handleRetry)
-            ) : (
-              <View style={styles.errorContainer}>
-                <Text style={styles.errorIcon}>⚠️</Text>
-                <Text style={styles.errorTitle}>Connection Error</Text>
-                <Text style={styles.errorMessage}>{errorState.message}</Text>
-                <TouchableOpacity
-                  style={styles.retryButton}
-                  onPress={handleRetry}
-                  accessibilityRole="button"
-                  accessibilityLabel="Retry loading checkout"
-                >
-                  <Text style={styles.retryButtonText}>Retry</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.cancelButton}
-                  onPress={handleCancellation}
-                  accessibilityRole="button"
-                  accessibilityLabel="Cancel checkout"
-                >
-                  <Text style={styles.cancelButtonText}>Cancel</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </View>
-        )}
-      </View>
-    </SafeAreaView>
+          )}
+        </View>
+      </SafeAreaView>
+    </SafeAreaProvider>
   );
 }
 
@@ -374,6 +414,9 @@ const WEBVIEW_BRIDGE_SHIM = `
 // ─── Styles ────────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
+  provider: {
+    flex: 1,
+  },
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',

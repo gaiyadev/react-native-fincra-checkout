@@ -11,7 +11,7 @@ describe('UrlHandler.isCompletionUrl', () => {
   describe('when expectedRedirectUrl is provided', () => {
     const redirectUrl = 'https://api.example.com/payment/callback';
 
-    it('returns true when URL starts with the redirect URL (exact match)', () => {
+    it('returns true for an exact match', () => {
       expect(UrlHandler.isCompletionUrl(redirectUrl, redirectUrl)).toBe(true);
     });
 
@@ -108,10 +108,96 @@ describe('UrlHandler.isCompletionUrl', () => {
       const redirectUrl = 'https://api.example.com/payment/callback';
       expect(UrlHandler.isCompletionUrl(redirectUrl, redirectUrl)).toBe(true);
       const params = UrlHandler.extractResponseParams(redirectUrl);
-      const rawStatus = params['status']?.toLowerCase() ?? 'success';
+      const rawStatus = UrlHandler.extractStatus(params);
       expect(rawStatus).toBe('success');
       expect(UrlHandler.isSuccessStatus(rawStatus)).toBe(true);
     });
+  });
+});
+
+// ─── Item 3: strict redirect URL matching ─────────────────────────────────────
+
+describe('UrlHandler.isCompletionUrl — strict redirect matching', () => {
+  const redirect = 'https://myapp.com/callback';
+
+  it('rejects a lookalike host that merely starts with the redirect host', () => {
+    expect(
+      UrlHandler.isCompletionUrl('https://google.com.evil.io/x', 'https://google.com')
+    ).toBe(false);
+    expect(
+      UrlHandler.isCompletionUrl('https://myapp.com.evil.io/callback', redirect)
+    ).toBe(false);
+  });
+
+  it('rejects a path that only shares a prefix (no "/" boundary)', () => {
+    expect(
+      UrlHandler.isCompletionUrl('https://myapp.com/callbacks-other', redirect)
+    ).toBe(false);
+  });
+
+  it('accepts a trailing slash and sub-paths at a "/" boundary', () => {
+    expect(UrlHandler.isCompletionUrl('https://myapp.com/callback/', redirect)).toBe(true);
+    expect(UrlHandler.isCompletionUrl('https://myapp.com/callback/done', redirect)).toBe(true);
+    expect(
+      UrlHandler.isCompletionUrl('https://myapp.com/callback', `${redirect}/`)
+    ).toBe(true);
+  });
+
+  it('ignores query and fragment', () => {
+    expect(
+      UrlHandler.isCompletionUrl('https://myapp.com/callback?reference=R#top', redirect)
+    ).toBe(true);
+    expect(
+      UrlHandler.isCompletionUrl('https://myapp.com/callback', `${redirect}?x=1`)
+    ).toBe(true);
+  });
+
+  it('compares host case-insensitively and normalises default ports', () => {
+    expect(UrlHandler.isCompletionUrl('https://MyApp.COM/callback', redirect)).toBe(true);
+    expect(UrlHandler.isCompletionUrl('https://myapp.com:443/callback', redirect)).toBe(true);
+  });
+
+  it('rejects a different scheme or port', () => {
+    expect(UrlHandler.isCompletionUrl('http://myapp.com/callback', redirect)).toBe(false);
+    expect(UrlHandler.isCompletionUrl('https://myapp.com:8443/callback', redirect)).toBe(false);
+  });
+
+  it('rejects userinfo tricks pointing at another host', () => {
+    expect(
+      UrlHandler.isCompletionUrl('https://myapp.com@evil.io/callback', redirect)
+    ).toBe(false);
+  });
+
+  it('an empty expected path matches any path on that host', () => {
+    expect(UrlHandler.isCompletionUrl('https://myapp.com/any/path', 'https://myapp.com')).toBe(true);
+    expect(UrlHandler.isCompletionUrl('https://other.com/any', 'https://myapp.com/')).toBe(false);
+  });
+
+  it('falls back to startsWith when the expected URL cannot be parsed', () => {
+    expect(UrlHandler.isCompletionUrl('myapp-callback?ok', 'myapp-callback')).toBe(true);
+    expect(UrlHandler.isCompletionUrl('other', 'myapp-callback')).toBe(false);
+  });
+});
+
+// ─── Item 2: UrlHandler.extractStatus ─────────────────────────────────────────
+
+describe('UrlHandler.extractStatus', () => {
+  it('reads "status" (lower-cased)', () => {
+    expect(UrlHandler.extractStatus({ status: 'FAILED' })).toBe('failed');
+  });
+
+  it('falls back to "payment_status" when "status" is missing', () => {
+    expect(UrlHandler.extractStatus({ payment_status: 'failed' })).toBe('failed');
+  });
+
+  it('prefers "status" over "payment_status"', () => {
+    expect(
+      UrlHandler.extractStatus({ status: 'success', payment_status: 'failed' })
+    ).toBe('success');
+  });
+
+  it('defaults to "success" when neither is present (sandbox omits it)', () => {
+    expect(UrlHandler.extractStatus({ reference: 'R' })).toBe('success');
   });
 });
 
@@ -199,6 +285,14 @@ describe('UrlHandler.parsePaymentResponse', () => {
     };
     const response = UrlHandler.parsePaymentResponse(params);
     expect(response.rawResponse).toEqual(params);
+  });
+
+  it('uses "payment_status" when "status" is missing', () => {
+    const response = UrlHandler.parsePaymentResponse({
+      reference: 'R',
+      payment_status: 'successful',
+    });
+    expect(response.status).toBe('successful');
   });
 
   it('defaults status to "unknown" when missing', () => {

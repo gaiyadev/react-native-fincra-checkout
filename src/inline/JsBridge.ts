@@ -23,7 +23,10 @@ export enum FincraBridgeEvent {
 /** A parsed message posted by the Fincra JS SDK via `postMessage`. */
 export interface FincraBridgeMessage {
   event: FincraBridgeEvent;
-  /** Populated only for `success` and `error` events. */
+  /**
+   * Always populated for `success` events; populated for `error` events
+   * that carry a data object.
+   */
   data?: FincraPaymentResponse | { message: string };
 }
 
@@ -48,25 +51,15 @@ export function parseMessage(jsonString: string): FincraBridgeMessage {
     const eventStr = typeof map['event'] === 'string' ? map['event'] : null;
     const event = _parseEvent(eventStr);
 
-    if (
-      event === FincraBridgeEvent.Success &&
-      map['data'] != null &&
-      typeof map['data'] === 'object' &&
-      !Array.isArray(map['data'])
-    ) {
-      // Fix #5: use a spread copy instead of mutating the JSON.parse result
-      const rawData = map['data'] as Record<string, unknown>;
-      const dataMap: Record<string, unknown> = { ...rawData };
-
-      // Ensure status is always set for the response
-      if (!dataMap['status']) {
-        dataMap['status'] = 'success';
-      }
-      // Coerce all values to strings (mirrors Flutter's `.map((k,v) => MapEntry(k, v.toString()))`)
-      const params: Record<string, string> = {};
-      for (const [k, v] of Object.entries(dataMap)) {
-        params[k] = String(v);
-      }
+    if (event === FincraBridgeEvent.Success) {
+      // A success event is always a success — even with missing/malformed
+      // data (empty references), so a real payment is never hidden.
+      const rawData = map['data'];
+      const params =
+        rawData != null && typeof rawData === 'object' && !Array.isArray(rawData)
+          ? normalizeSuccessData(rawData as Record<string, unknown>)
+          : {};
+      if (!params['status']) params['status'] = 'success';
       return { event, data: UrlHandler.parsePaymentResponse(params) };
     }
 
@@ -91,6 +84,21 @@ export function parseMessage(jsonString: string): FincraBridgeMessage {
 }
 
 // ── Internal ──────────────────────────────────────────────────────────────────
+
+/**
+ * Converts success data to a string map: objects/arrays are JSON-encoded,
+ * other values stringified, and `null`/`undefined` values dropped.
+ */
+function normalizeSuccessData(
+  data: Record<string, unknown>
+): Record<string, string> {
+  const params: Record<string, string> = {};
+  for (const [k, v] of Object.entries(data)) {
+    if (v == null) continue;
+    params[k] = typeof v === 'object' ? JSON.stringify(v) : String(v);
+  }
+  return params;
+}
 
 function _parseEvent(eventStr: string | null): FincraBridgeEvent {
   switch (eventStr) {

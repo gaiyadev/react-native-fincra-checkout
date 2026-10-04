@@ -24,7 +24,8 @@
     "start": "expo start -c",
     "android": "expo start --android -c",
     "ios": "expo start --ios -c",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "checkout-link": "node --env-file=.env scripts/create-checkout-link.mjs"
   },
   "private": true
 }
