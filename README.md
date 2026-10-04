@@ -17,7 +17,7 @@ A **production-ready**, **100% TypeScript** React Native SDK for [Fincra Checkou
 - ✅ **Imperative API**: `await FincraCheckout.openWebView({...})` from anywhere
 - ✅ **Declarative API**: `<FincraWebViewCheckout />` and `<FincraInlineCheckout />`
 - ✅ **Strongly-typed result**: Discriminated union — `success | error | cancelled`
-- ✅ **URL interception**: Redirect URL prefix match + query-param fallback
+- ✅ **URL interception**: Strict redirect URL match (scheme, host, port, path boundary) + query-param fallback
 - ✅ **15-second init timeout** for the Inline mode
 - ✅ **Modern SafeAreaView** via `react-native-safe-area-context`
 - ✅ **Built-in Error Recovery & Offline Retry UI** with custom `renderError` prop support
@@ -55,6 +55,38 @@ cd ios && pod install
 > - For **Inline Checkout**: Only your **public key** (`pk_...`) is used. This is safe to bundle.
 >
 > Storing secret keys in client code exposes them to reverse engineering and can lead to fraudulent transactions.
+>
+> **Expo users:** every `EXPO_PUBLIC_*` environment variable is inlined into the JS bundle. Never give your secret key that prefix.
+
+## ⚠️ Verify every payment server-side
+
+> The SDK result is a **UX signal, not proof of payment.** A redirect or a JS callback can be missing data or be tampered with on the device, and in WebView mode a redirect **without** a `status` / `payment_status` parameter is reported as `success` (the Fincra sandbox omits it).
+>
+> **Before fulfilling an order, always verify the transaction on your backend** — via the Fincra API (look up the `reference`) or your Fincra webhook.
+
+---
+
+## Creating a hosted checkout link (server-side)
+
+WebView mode needs a hosted checkout link, created **on your server** with your secret key:
+
+```http
+POST https://sandboxapi.fincra.com/checkout/payments   (production: https://api.fincra.com/checkout/payments)
+api-key: <your SECRET key>
+x-pub-key: <your PUBLIC key>
+content-type: application/json
+
+{
+  "amount": 5000,
+  "currency": "NGN",
+  "customer": { "name": "Jane Doe", "email": "jane@example.com" },
+  "redirectUrl": "https://api.yourapp.com/payment/callback",
+  "reference": "ORDER-001",        // optional
+  "feeBearer": "business"          // optional
+}
+```
+
+The link is in the response at `data.link`. Return it to the app and pass it as `checkoutUrl`, with the same `redirectUrl`. The example app ships a script for this: `cd example && npm run checkout-link`.
 
 ---
 
@@ -142,7 +174,7 @@ async function handleInlinePayment() {
     currency: 'NGN',
     customerEmail: 'customer@example.com',
     customerName: 'Jane Doe',
-    customerPhoneNumber: '08012345678',
+    customerPhoneNumber: '08012345678', // optional
     feeBearer: 'customer',
     reference: 'ORDER-001', // optional — Fincra generates one if omitted
     paymentMethods: ['card', 'bank_transfer'], // optional
@@ -203,7 +235,6 @@ function InlinePaymentScreen() {
       currency="NGN"
       customerEmail="customer@example.com"
       customerName="John Doe"
-      customerPhoneNumber="08099887766"
       feeBearer="business"
       onSuccess={(response) => console.log(response)}
       onFailed={(error) => console.error(error)}
@@ -229,9 +260,9 @@ import type {
 } from 'react-native-fincra-checkout';
 
 // Discriminated union result
-const result: FincraCheckoutResult =
+type FincraCheckoutResult =
   | { type: 'success'; response: FincraPaymentResponse }
-  | { type: 'error';   error: FincraPaymentError }
+  | { type: 'error'; error: FincraPaymentError }
   | { type: 'cancelled' };
 ```
 
@@ -255,7 +286,9 @@ const result: FincraCheckoutResult =
 | `headerTintColor` | `string` | `'#000000'` | Nav bar text/icon color |
 | `showCancelConfirmationDialog` | `boolean` | `false` | Show Alert before closing |
 | `loadingComponent` | `ReactNode` | `ActivityIndicator` | Custom loading spinner |
+| `showCloseButton` | `boolean` | `true` | Show the ✕ in the header. If hidden, iOS users can't leave while the page loads or hangs (the error screen's Cancel and Android back still work) |
 | `closeIcon` | `ReactNode` | `✕` text | Custom close button content |
+| `renderError` | `(error, retry) => ReactNode` | built-in | Custom load-error screen |
 
 ### `WebViewCheckoutConfig`
 
@@ -269,11 +302,11 @@ const result: FincraCheckoutResult =
 | Prop | Type | Required | Description |
 |---|---|---|---|
 | `publicKey` | `string` | ✅ | Your Fincra public key (`pk_...`) |
-| `amount` | `number` | ✅ | Amount in smallest currency unit |
+| `amount` | `number` | ✅ | Amount to charge (a number, not a string) |
 | `currency` | `FincraCurrency` | ✅ | Payment currency |
 | `customerEmail` | `string` | ✅ | Customer email |
 | `customerName` | `string` | ✅ | Customer full name |
-| `customerPhoneNumber` | `string` | ✅ | Customer phone number |
+| `customerPhoneNumber` | `string` | — | Customer phone number. Trimmed; omitted from the request when blank |
 | `feeBearer` | `FeeBearer` | ✅ | `'business'` or `'customer'` |
 | `reference` | `string` | — | Custom transaction reference |
 | `paymentMethods` | `string[]` | — | Restrict to specific methods |
@@ -284,8 +317,17 @@ const result: FincraCheckoutResult =
 
 The WebView mode intercepts navigation requests:
 
-1. **If `redirectUrl` is set**: Any URL starting with `redirectUrl` triggers completion (prefix match — mirrors Flutter's `url.startsWith(redirectUrl)`).
-2. **Fallback** (no `redirectUrl`): Completion is detected when both `status` (or `payment_status`) **and** `reference` query params are present.
+1. **If `redirectUrl` is set**, a URL completes the checkout only if it matches strictly:
+   - same scheme, host (case-insensitive) and port (`:443` / `:80` defaults normalised);
+   - path equal to the redirect path, or continuing it at a `/` (`/callback`, `/callback/`, `/callback/done` match; `/callbacks-other` does not);
+   - query string and fragment are ignored; a redirect URL with no path matches any path on that host.
+
+   Lookalike hosts such as `https://myapp.com.evil.io/callback` never match.
+2. **Fallback** (no `redirectUrl`): completion is detected when both `status` (or `payment_status`) **and** `reference` query params are present.
+
+The status is read from `status`, falling back to `payment_status`. `success` / `successful` → `onSuccess`; any other value → `onFailed` with `code` = the status and `message` = the `message` param (or `'Payment failed'`). A **missing** status is treated as success — see **Verify every payment server-side** above.
+
+Page-load errors (main frame only) show a Retry / Cancel screen; they never report the payment as failed.
 
 Response parameters are normalized:
 - `customerReference` → `reference` (preferred)
@@ -300,7 +342,7 @@ Response parameters are normalized:
 npm test
 ```
 
-Tests cover `UrlHandler` (URL detection, param extraction, reference normalization) and `JsBridge` (event parsing, data coercion, malformed input handling) — no device or emulator required.
+Tests cover `UrlHandler` (strict redirect matching, status extraction, reference normalization), `JsBridge` (event parsing, data normalization), the inline HTML/options builder, and the checkout components and host (settle-once, late callbacks, back button) — no device or emulator required.
 
 ---
 

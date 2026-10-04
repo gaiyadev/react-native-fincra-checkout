@@ -56,7 +56,8 @@ export interface FincraPaymentResponse {
   /**
    * Full raw response map. All values are strings.
    * For inline mode, numeric/boolean fields from Fincra (e.g. `amount`) are
-   * coerced to strings to match the URL-params format used in WebView mode.
+   * coerced to strings to match the URL-params format used in WebView mode;
+   * nested objects/arrays are JSON-encoded and `null` values are dropped.
    */
   rawResponse: Record<string, string>;
 }
@@ -114,6 +115,13 @@ export interface BaseCheckoutProps {
   showCancelConfirmationDialog?: boolean;
   /** Custom loading indicator to display while the WebView is loading. */
   loadingComponent?: ReactNode;
+  /**
+   * Show the ✕ close button in the header. Default: true.
+   * If you hide it, users can still leave via the error screen's Cancel
+   * button and the Android back button — but on iOS there is no other way to
+   * leave while the page is loading, or if it hangs.
+   */
+  showCloseButton?: boolean;
   /** Custom close icon/element for the header. */
   closeIcon?: ReactNode;
   /** Custom error screen renderer for network/loading recovery. */
@@ -154,8 +162,11 @@ export interface InlineCheckoutConfig extends BaseCheckoutProps {
   customerEmail: string;
   /** Customer's full name. */
   customerName: string;
-  /** Customer's phone number. */
-  customerPhoneNumber: string;
+  /**
+   * Customer's phone number (optional in Fincra's API). Trimmed; when blank
+   * it is not sent to Fincra at all.
+   */
+  customerPhoneNumber?: string;
   /** Who bears the Fincra processing fee. */
   feeBearer: FeeBearer;
   /** Optional unique transaction reference. Fincra generates one if omitted. */

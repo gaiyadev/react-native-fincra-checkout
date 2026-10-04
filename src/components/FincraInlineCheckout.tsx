@@ -48,7 +48,6 @@ const INIT_TIMEOUT_MS = 15_000;
  *   currency="NGN"
  *   customerEmail="user@example.com"
  *   customerName="John Doe"
- *   customerPhoneNumber="08012345678"
  *   feeBearer="customer"
  *   onSuccess={(res) => console.log(res.reference)}
  *   onCancelled={() => navigation.goBack()}
@@ -60,6 +59,7 @@ export function FincraInlineCheckout({
   headerBackgroundColor = '#FFFFFF',
   headerTintColor = '#000000',
   showCancelConfirmationDialog = false,
+  showCloseButton = true,
   loadingComponent,
   closeIcon,
   renderError,
@@ -73,8 +73,40 @@ export function FincraInlineCheckout({
   const [errorState, setErrorState] = useState<FincraPaymentError | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const webViewRef = useRef<WebView<object> | null>(null);
-  const hasCompleted = useRef(false);
+  // `settledRef`: a result (success / error / cancel) has been delivered.
+  // `isMountedRef`: late bridge messages after unmount must be ignored.
+  const settledRef = useRef(false);
+  const isMountedRef = useRef(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  /** True while callbacks may still update state or deliver a result. */
+  const isActive = useCallback(
+    () => isMountedRef.current && !settledRef.current,
+    []
+  );
+
+  const clearInitTimeout = useCallback(() => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = null;
+  }, []);
+
+  /** Single exit point — delivers at most one result per session. */
+  const settle = useCallback(
+    (deliver: () => void) => {
+      if (!isMountedRef.current || settledRef.current) return;
+      settledRef.current = true;
+      clearInitTimeout();
+      deliver();
+    },
+    [clearInitTimeout]
+  );
 
   // Fix #3: Memoize HTML generation — prevents WebView reload on parent re-renders.
   // The HTML is intentionally generated once per mount; payment params are immutable.
@@ -84,24 +116,21 @@ export function FincraInlineCheckout({
     [configJson]
   );
 
-  // ── 15-second init timeout ──────────────────────────────────────────────────
+  // ── 15-second init timeout (re-armed on every Retry) ────────────────────────
   useEffect(() => {
     timeoutRef.current = setTimeout(() => {
-      if (!hasCompleted.current) {
-        const err: FincraPaymentError = {
-          code: 'timeout',
-          message:
-            'Fincra Checkout failed to load. Please check your internet connection.',
-        };
-        setErrorState(err);
-        setIsLoading(false);
-      }
+      if (!isActive()) return;
+      const err: FincraPaymentError = {
+        code: 'timeout',
+        message:
+          'Fincra Checkout failed to load. Please check your internet connection.',
+      };
+      setErrorState(err);
+      setIsLoading(false);
     }, INIT_TIMEOUT_MS);
 
-    return () => {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    };
-  }, []);
+    return clearInitTimeout;
+  }, [reloadKey, isActive, clearInitTimeout]);
 
   // Fix #10: Stable ref for handleCancellation so the BackHandler effect
   // doesn't need it as a dependency and never captures a stale closure.
@@ -120,34 +149,35 @@ export function FincraInlineCheckout({
     return () => subscription.remove();
   }, []); // safe: always calls through the ref
 
-  // ── WebView error ───────────────────────────────────────────────────────────
-  const handleError = useCallback(
-    (syntheticEvent: WebViewErrorEvent): void => {
-      if (hasCompleted.current) return;
-      const { nativeEvent } = syntheticEvent;
-      const err: FincraPaymentError = {
-        code: String(nativeEvent.code ?? 'webview_error'),
-        message: nativeEvent.description ?? 'A WebView error occurred.',
-      };
+  // ── Load errors (main frame only — see FincraWebViewCheckout) ───────────────
+  const showLoadError = useCallback(
+    (err: FincraPaymentError): void => {
+      if (!isActive()) return;
+      clearInitTimeout();
       setErrorState(err);
       setIsLoading(false);
     },
-    [setErrorState, setIsLoading]
+    [isActive, clearInitTimeout, setErrorState, setIsLoading]
   );
 
-  // ── HTTP error ──────────────────────────────────────────────────────────────
+  const handleError = useCallback(
+    ({ nativeEvent }: WebViewErrorEvent): void => {
+      showLoadError({
+        code: String(nativeEvent.code ?? 'webview_error'),
+        message: nativeEvent.description ?? 'A WebView error occurred.',
+      });
+    },
+    [showLoadError]
+  );
+
   const handleHttpError = useCallback(
-    (syntheticEvent: WebViewHttpErrorEvent): void => {
-      if (hasCompleted.current) return;
-      const { nativeEvent } = syntheticEvent;
-      const err: FincraPaymentError = {
+    ({ nativeEvent }: WebViewHttpErrorEvent): void => {
+      showLoadError({
         code: String(nativeEvent.statusCode ?? 'http_error'),
         message: nativeEvent.description ?? 'A WebView HTTP error occurred.',
-      };
-      setErrorState(err);
-      setIsLoading(false);
+      });
     },
-    [setErrorState, setIsLoading]
+    [showLoadError]
   );
 
   // ── Retry handler ───────────────────────────────────────────────────────────
@@ -158,47 +188,42 @@ export function FincraInlineCheckout({
   }, [setErrorState, setIsLoading, setReloadKey]);
 
   // ── JS Bridge message handler ───────────────────────────────────────────────
+  // Messages that arrive after the session settled (e.g. closed via the
+  // Android back button) or after unmount are ignored.
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
-      if (hasCompleted.current) return;
+      if (!isActive()) return;
 
       const msg = parseMessage(event.nativeEvent.data);
 
       switch (msg.event) {
         case FincraBridgeEvent.Ready:
           // SDK loaded — clear timeout and hide the loading spinner
-          if (timeoutRef.current) clearTimeout(timeoutRef.current);
+          clearInitTimeout();
           setIsLoading(false);
           break;
 
-        case FincraBridgeEvent.Success:
-          hasCompleted.current = true;
-          if (timeoutRef.current) clearTimeout(timeoutRef.current);
-          if (msg.data && 'reference' in msg.data) {
-            onSuccess?.(msg.data as FincraPaymentResponse);
-          } else {
-            onCancelled?.();
-          }
+        case FincraBridgeEvent.Success: {
+          // Always a success, even without data (empty references).
+          const response = msg.data as FincraPaymentResponse;
+          settle(() => onSuccess?.(response));
           break;
+        }
 
         case FincraBridgeEvent.Closed:
-          hasCompleted.current = true;
-          if (timeoutRef.current) clearTimeout(timeoutRef.current);
-          onCancelled?.();
+          settle(() => onCancelled?.());
           break;
 
         case FincraBridgeEvent.Error: {
-          hasCompleted.current = true;
-          if (timeoutRef.current) clearTimeout(timeoutRef.current);
           const errorMessage =
-            msg.data && 'message' in msg.data
-              ? (msg.data as { message: string }).message
+            msg.data && 'message' in msg.data && msg.data.message
+              ? msg.data.message
               : 'An unknown error occurred';
           const err: FincraPaymentError = {
             code: 'fincra_sdk_error',
             message: errorMessage,
           };
-          onFailed?.(err);
+          settle(() => onFailed?.(err));
           break;
         }
 
@@ -208,13 +233,21 @@ export function FincraInlineCheckout({
           break;
       }
     },
-    [onSuccess, onFailed, onCancelled, setIsLoading]
+    [
+      isActive,
+      clearInitTimeout,
+      settle,
+      setIsLoading,
+      onSuccess,
+      onFailed,
+      onCancelled,
+    ]
   );
 
   // ── Cancellation ────────────────────────────────────────────────────────────
   // Fix #4: Use static Alert import — no dynamic require() needed.
   const handleCancellation = useCallback(() => {
-    if (hasCompleted.current) return;
+    if (!isActive()) return;
 
     if (showCancelConfirmationDialog) {
       Alert.alert(
@@ -225,22 +258,15 @@ export function FincraInlineCheckout({
           {
             text: 'Yes',
             style: 'destructive',
-            onPress: () => {
-              if (!hasCompleted.current) {
-                hasCompleted.current = true;
-                if (timeoutRef.current) clearTimeout(timeoutRef.current);
-                onCancelled?.();
-              }
-            },
+            // May fire after unmount — settle() ignores it then.
+            onPress: () => settle(() => onCancelled?.()),
           },
         ]
       );
     } else {
-      hasCompleted.current = true;
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      onCancelled?.();
+      settle(() => onCancelled?.());
     }
-  }, [showCancelConfirmationDialog, onCancelled]);
+  }, [isActive, showCancelConfirmationDialog, settle, onCancelled]);
 
   // Keep the ref in sync with the latest handleCancellation (Fix #10)
   useEffect(() => {
@@ -263,19 +289,24 @@ export function FincraInlineCheckout({
       <View
         style={[styles.header, { backgroundColor: headerBackgroundColor }]}
       >
-        <TouchableOpacity
-          style={styles.closeButton}
-          onPress={handleCancellation}
-          accessibilityLabel="Close checkout"
-          accessibilityRole="button"
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        >
-          {closeIcon ?? (
-            <Text style={[styles.closeIcon, { color: headerTintColor }]}>
-              ✕
-            </Text>
-          )}
-        </TouchableOpacity>
+        {/* Spacer keeps the title centred when the close button is hidden */}
+        {showCloseButton ? (
+          <TouchableOpacity
+            style={styles.closeButton}
+            onPress={handleCancellation}
+            accessibilityLabel="Close checkout"
+            accessibilityRole="button"
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            {closeIcon ?? (
+              <Text style={[styles.closeIcon, { color: headerTintColor }]}>
+                ✕
+              </Text>
+            )}
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.closeButton} />
+        )}
         <Text
           style={[styles.headerTitle, { color: headerTintColor }]}
           numberOfLines={1}

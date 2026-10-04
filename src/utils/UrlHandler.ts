@@ -5,6 +5,8 @@ import type { FincraPaymentResponse } from '../types';
 // Direct TypeScript port of flutter_fincra_checkout/lib/src/utils/url_handler.dart
 // Mirrors UrlHandler.isCompletionUrl() and UrlHandler.extractResponseParams()
 
+const DEFAULT_PORTS: Record<string, string> = { http: '80', https: '443' };
+
 /**
  * Utilities for detecting Fincra payment completion URLs and
  * extracting normalized response parameters.
@@ -14,7 +16,8 @@ export class UrlHandler {
    * Returns `true` if the given URL signals a Fincra payment completion.
    *
    * Logic (mirrors Flutter):
-   * 1. If `expectedRedirectUrl` is provided, check `url.startsWith(expectedRedirectUrl)`.
+   * 1. If `expectedRedirectUrl` is provided, the URL must match it strictly —
+   *    see {@link UrlHandler.matchesRedirectUrl}.
    * 2. Fallback: Fincra appends `status` (or `payment_status`) AND `reference` as query params.
    *
    * @param url - The URL being navigated to.
@@ -24,7 +27,7 @@ export class UrlHandler {
     if (!url) return false;
 
     if (expectedRedirectUrl && expectedRedirectUrl.length > 0) {
-      return url.startsWith(expectedRedirectUrl);
+      return UrlHandler.matchesRedirectUrl(url, expectedRedirectUrl);
     }
 
     // Fallback: detect via query parameters
@@ -37,6 +40,53 @@ export class UrlHandler {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Strictly matches `url` against the expected redirect URL.
+   *
+   * - Scheme, host (case-insensitive) and port (default ports normalised) must be equal.
+   * - The path must equal the expected path or continue it at a `/` boundary
+   *   (trailing slashes ignored). An empty expected path matches any path.
+   * - Query string and fragment are ignored.
+   * - Falls back to `startsWith` only if the expected URL cannot be parsed.
+   *
+   * Prevents lookalike hosts such as `https://google.com.evil.io` matching
+   * `https://google.com`.
+   */
+  static matchesRedirectUrl(url: string, expectedRedirectUrl: string): boolean {
+    const expected = UrlHandler._parseUrl(expectedRedirectUrl);
+    if (!expected) return url.startsWith(expectedRedirectUrl);
+
+    const actual = UrlHandler._parseUrl(url);
+    if (!actual) return false;
+
+    if (
+      actual.scheme !== expected.scheme ||
+      actual.host !== expected.host ||
+      actual.port !== expected.port
+    ) {
+      return false;
+    }
+
+    if (expected.path === '') return true;
+    return (
+      actual.path === expected.path ||
+      actual.path.startsWith(`${expected.path}/`)
+    );
+  }
+
+  /**
+   * Reads the payment status from completion params, accepting either
+   * `status` or `payment_status`. Returns lower-case.
+   *
+   * A missing status is treated as `'success'` because the sandbox redirect
+   * omits it. **Always verify the payment on your backend** (Fincra API or
+   * webhook) before fulfilling an order.
+   */
+  static extractStatus(params: Record<string, string>): string {
+    const raw = params['status'] ?? params['payment_status'];
+    return raw?.toLowerCase() ?? 'success';
   }
 
   /**
@@ -81,7 +131,7 @@ export class UrlHandler {
     return {
       reference: finalRef,
       transactionId: finalTxId ?? '',
-      status: params['status'] ?? 'unknown',
+      status: params['status'] ?? params['payment_status'] ?? 'unknown',
       message: params['message'],
       rawResponse: params,
     };
@@ -98,6 +148,29 @@ export class UrlHandler {
   }
 
   // ── Internal ────────────────────────────────────────────────────────────────
+
+  /**
+   * Minimal absolute-URL parser. React Native's `URL` polyfill does not
+   * implement `hostname`/`port`, so this is done by hand.
+   * Returns `null` if the string is not an absolute `scheme://host` URL.
+   */
+  private static _parseUrl(
+    url: string
+  ): { scheme: string; host: string; port: string; path: string } | null {
+    const match =
+      /^([a-z][a-z0-9+.-]*):\/\/(?:[^@/?#]*@)?(\[[^\]]*\]|[^:/?#]*)(?::(\d*))?([^?#]*)/i.exec(
+        url.trim()
+      );
+    if (!match || !match[2]) return null;
+
+    const scheme = match[1].toLowerCase();
+    const defaultPort = DEFAULT_PORTS[scheme] ?? '';
+    const port = match[3] || defaultPort;
+    // Normalise trailing slashes so `/callback/` equals `/callback`
+    const path = match[4].replace(/\/+$/, '');
+
+    return { scheme, host: match[2].toLowerCase(), port, path };
+  }
 
   /**
    * Parses URL query string into a `URLSearchParams`-like `Map`.
