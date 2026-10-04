@@ -89,7 +89,7 @@ export default function App() {
         headerTitle: "Pay with Fincra",
         headerBackgroundColor: "#FFFFFF",
         showCancelConfirmationDialog: true,
-        showCloseButton: false,
+        showCloseButton: true,
       });
 
       handleResult(result);
@@ -115,7 +115,7 @@ export default function App() {
         paymentMethods: ["card", "bank_transfer", "palmpay"],
         headerTitle: "Secure Inline Pay",
         showCancelConfirmationDialog: true,
-        showCloseButton: false,
+        showCloseButton: true,
       });
 
       handleResult(result);

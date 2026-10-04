@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Retry re-arms the 15s load timeout.** Previously the timeout only ran once per mount.
 
 ### Fixed — `FincraCheckoutHost`
+- **Header under the status bar / Dynamic Island on iOS.** `SafeAreaView` reads insets from the nearest `SafeAreaProvider`, and the checkout `Modal` had none, so the insets were 0 and taps on the ✕ were swallowed by the system. Both checkout screens now wrap themselves in a `SafeAreaProvider`.
 - **Android back (`Modal onRequestClose`) settles the session once.** Each `open*()` call has its own session id, and a late result from the page can no longer call the merchant's callbacks a second time (e.g. popping the host app's own screen).
 
 ### Added

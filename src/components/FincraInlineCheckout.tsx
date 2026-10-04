@@ -10,7 +10,10 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  SafeAreaProvider,
+  SafeAreaView,
+} from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import type {
   WebViewMessageEvent,
@@ -278,110 +281,116 @@ export function FincraInlineCheckout({
     headerTintColor === '#000000' ? 'dark-content' : 'light-content';
 
   // ── Render ──────────────────────────────────────────────────────────────────
+  // Own SafeAreaProvider: SafeAreaView reads insets from the nearest provider,
+  // and a Modal (FincraCheckoutHost) is a separate native tree. Without one the
+  // insets are 0 and the header sits under the status bar / Dynamic Island,
+  // where iOS swallows taps. Nested providers are fine if the app has its own.
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar
-        barStyle={statusBarStyle}
-        backgroundColor={headerBackgroundColor}
-      />
-
-      {/* ── Header bar — shown during loading so the user can abort ── */}
-      <View
-        style={[styles.header, { backgroundColor: headerBackgroundColor }]}
-      >
-        {/* Spacer keeps the title centred when the close button is hidden */}
-        {showCloseButton ? (
-          <TouchableOpacity
-            style={styles.closeButton}
-            onPress={handleCancellation}
-            accessibilityLabel="Close checkout"
-            accessibilityRole="button"
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          >
-            {closeIcon ?? (
-              <Text style={[styles.closeIcon, { color: headerTintColor }]}>
-                ✕
-              </Text>
-            )}
-          </TouchableOpacity>
-        ) : (
-          <View style={styles.closeButton} />
-        )}
-        <Text
-          style={[styles.headerTitle, { color: headerTintColor }]}
-          numberOfLines={1}
-        >
-          {headerTitle}
-        </Text>
-        <View style={styles.closeButton} />
-      </View>
-
-      {/* ── WebView running Fincra inline JS SDK ── */}
-      <View style={styles.webViewContainer}>
-        <WebView
-          key={reloadKey}
-          ref={webViewRef}
-          // Fix #14: restrict to HTTPS + about:blank only (removed wildcard)
-          originWhitelist={['https://*', 'about:blank']}
-          source={{ html }}
-          style={styles.webView}
-          javaScriptEnabled
-          domStorageEnabled
-          onMessage={handleMessage}
-          onError={handleError}
-          onHttpError={handleHttpError}
-          // Inject the ReactNativeWebView bridge shim so older WKWebView versions work
-          injectedJavaScriptBeforeContentLoaded={WEBVIEW_BRIDGE_SHIM}
-          // Allow the external CDN script to load
-          mixedContentMode="always"
-          // Fix #15: removed allowFileAccess and allowUniversalAccessFromFileURLs —
-          // the HTML is served as an inline blob, not a file:// URL, so these are
-          // unnecessary and allowUniversalAccessFromFileURLs is a security footgun.
+    <SafeAreaProvider style={styles.provider}>
+      <SafeAreaView style={styles.container}>
+        <StatusBar
+          barStyle={statusBarStyle}
+          backgroundColor={headerBackgroundColor}
         />
 
-        {/* ── Loading overlay ── */}
-        {isLoading && !errorState && (
-          <View style={styles.loadingOverlay}>
-            <View style={styles.loadingCard}>
-              {loadingComponent ?? (
-                <ActivityIndicator size="large" color="#0066FF" />
+        {/* ── Header bar — shown during loading so the user can abort ── */}
+        <View
+          style={[styles.header, { backgroundColor: headerBackgroundColor }]}
+        >
+          {/* Spacer keeps the title centred when the close button is hidden */}
+          {showCloseButton ? (
+            <TouchableOpacity
+              style={styles.closeButton}
+              onPress={handleCancellation}
+              accessibilityLabel="Close checkout"
+              accessibilityRole="button"
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              {closeIcon ?? (
+                <Text style={[styles.closeIcon, { color: headerTintColor }]}>
+                  ✕
+                </Text>
+              )}
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.closeButton} />
+          )}
+          <Text
+            style={[styles.headerTitle, { color: headerTintColor }]}
+            numberOfLines={1}
+          >
+            {headerTitle}
+          </Text>
+          <View style={styles.closeButton} />
+        </View>
+
+        {/* ── WebView running Fincra inline JS SDK ── */}
+        <View style={styles.webViewContainer}>
+          <WebView
+            key={reloadKey}
+            ref={webViewRef}
+            // Fix #14: restrict to HTTPS + about:blank only (removed wildcard)
+            originWhitelist={['https://*', 'about:blank']}
+            source={{ html }}
+            style={styles.webView}
+            javaScriptEnabled
+            domStorageEnabled
+            onMessage={handleMessage}
+            onError={handleError}
+            onHttpError={handleHttpError}
+            // Inject the ReactNativeWebView bridge shim so older WKWebView versions work
+            injectedJavaScriptBeforeContentLoaded={WEBVIEW_BRIDGE_SHIM}
+            // Allow the external CDN script to load
+            mixedContentMode="always"
+            // Fix #15: removed allowFileAccess and allowUniversalAccessFromFileURLs —
+            // the HTML is served as an inline blob, not a file:// URL, so these are
+            // unnecessary and allowUniversalAccessFromFileURLs is a security footgun.
+          />
+
+          {/* ── Loading overlay ── */}
+          {isLoading && !errorState && (
+            <View style={styles.loadingOverlay}>
+              <View style={styles.loadingCard}>
+                {loadingComponent ?? (
+                  <ActivityIndicator size="large" color="#0066FF" />
+                )}
+              </View>
+            </View>
+          )}
+
+          {/* ── Error Recovery overlay ── */}
+          {errorState && (
+            <View style={styles.errorOverlay}>
+              {renderError ? (
+                renderError(errorState, handleRetry)
+              ) : (
+                <View style={styles.errorContainer}>
+                  <Text style={styles.errorIcon}>⚠️</Text>
+                  <Text style={styles.errorTitle}>Connection Error</Text>
+                  <Text style={styles.errorMessage}>{errorState.message}</Text>
+                  <TouchableOpacity
+                    style={styles.retryButton}
+                    onPress={handleRetry}
+                    accessibilityRole="button"
+                    accessibilityLabel="Retry loading checkout"
+                  >
+                    <Text style={styles.retryButtonText}>Retry</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.cancelButton}
+                    onPress={handleCancellation}
+                    accessibilityRole="button"
+                    accessibilityLabel="Cancel checkout"
+                  >
+                    <Text style={styles.cancelButtonText}>Cancel</Text>
+                  </TouchableOpacity>
+                </View>
               )}
             </View>
-          </View>
-        )}
-
-        {/* ── Error Recovery overlay ── */}
-        {errorState && (
-          <View style={styles.errorOverlay}>
-            {renderError ? (
-              renderError(errorState, handleRetry)
-            ) : (
-              <View style={styles.errorContainer}>
-                <Text style={styles.errorIcon}>⚠️</Text>
-                <Text style={styles.errorTitle}>Connection Error</Text>
-                <Text style={styles.errorMessage}>{errorState.message}</Text>
-                <TouchableOpacity
-                  style={styles.retryButton}
-                  onPress={handleRetry}
-                  accessibilityRole="button"
-                  accessibilityLabel="Retry loading checkout"
-                >
-                  <Text style={styles.retryButtonText}>Retry</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.cancelButton}
-                  onPress={handleCancellation}
-                  accessibilityRole="button"
-                  accessibilityLabel="Cancel checkout"
-                >
-                  <Text style={styles.cancelButtonText}>Cancel</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </View>
-        )}
-      </View>
-    </SafeAreaView>
+          )}
+        </View>
+      </SafeAreaView>
+    </SafeAreaProvider>
   );
 }
 
@@ -405,6 +414,9 @@ const WEBVIEW_BRIDGE_SHIM = `
 // ─── Styles ────────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
+  provider: {
+    flex: 1,
+  },
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',

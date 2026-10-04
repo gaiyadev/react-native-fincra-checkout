@@ -10,7 +10,10 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  SafeAreaProvider,
+  SafeAreaView,
+} from 'react-native-safe-area-context';
 import type {
   WebViewNavigation,
   WebViewErrorEvent,
@@ -233,116 +236,125 @@ export function FincraWebViewCheckout({
     headerTintColor === '#000000' ? 'dark-content' : 'light-content';
 
   // ── Render ──────────────────────────────────────────────────────────────────
+  // Own SafeAreaProvider: SafeAreaView reads insets from the nearest provider,
+  // and a Modal (FincraCheckoutHost) is a separate native tree. Without one the
+  // insets are 0 and the header sits under the status bar / Dynamic Island,
+  // where iOS swallows taps. Nested providers are fine if the app has its own.
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar
-        barStyle={statusBarStyle}
-        backgroundColor={headerBackgroundColor}
-      />
-      {/* ── Header bar ── */}
-      <View
-        style={[styles.header, { backgroundColor: headerBackgroundColor }]}
-      >
-        {/* Spacer keeps the title centred when the close button is hidden */}
-        {showCloseButton ? (
-          <TouchableOpacity
-            style={styles.closeButton}
-            onPress={handleCancellation}
-            accessibilityLabel="Close checkout"
-            accessibilityRole="button"
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          >
-            {closeIcon ?? (
-              <Text style={[styles.closeIcon, { color: headerTintColor }]}>
-                ✕
-              </Text>
-            )}
-          </TouchableOpacity>
-        ) : (
-          <View style={styles.closeButton} />
-        )}
-        <Text
-          style={[styles.headerTitle, { color: headerTintColor }]}
-          numberOfLines={1}
-        >
-          {headerTitle}
-        </Text>
-        {/* Spacer to centre the title */}
-        <View style={styles.closeButton} />
-      </View>
-
-      {/* ── WebView ── */}
-      <View style={styles.webViewContainer}>
-        <WebView
-          key={reloadKey}
-          ref={webViewRef}
-          source={{ uri: checkoutUrl }}
-          style={styles.webView}
-          javaScriptEnabled
-          domStorageEnabled
-          startInLoadingState={false}
-          onLoadStart={() => {
-            if (isActive()) setIsLoading(true);
-          }}
-          onLoadEnd={() => {
-            if (isActive()) setIsLoading(false);
-          }}
-          onError={handleError}
-          onHttpError={handleHttpError}
-          onShouldStartLoadWithRequest={onShouldStartLoadWithRequest}
-          onNavigationStateChange={onNavigationStateChange}
-          // Fix #14: restrict to HTTPS + about:blank — prevents intent:// and
-          // other dangerous scheme navigations in a payment context.
-          originWhitelist={['https://*', 'about:blank']}
+    <SafeAreaProvider style={styles.provider}>
+      <SafeAreaView style={styles.container}>
+        <StatusBar
+          barStyle={statusBarStyle}
+          backgroundColor={headerBackgroundColor}
         />
+        {/* ── Header bar ── */}
+        <View
+          style={[styles.header, { backgroundColor: headerBackgroundColor }]}
+        >
+          {/* Spacer keeps the title centred when the close button is hidden */}
+          {showCloseButton ? (
+            <TouchableOpacity
+              style={styles.closeButton}
+              onPress={handleCancellation}
+              accessibilityLabel="Close checkout"
+              accessibilityRole="button"
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              {closeIcon ?? (
+                <Text style={[styles.closeIcon, { color: headerTintColor }]}>
+                  ✕
+                </Text>
+              )}
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.closeButton} />
+          )}
+          <Text
+            style={[styles.headerTitle, { color: headerTintColor }]}
+            numberOfLines={1}
+          >
+            {headerTitle}
+          </Text>
+          {/* Spacer to centre the title */}
+          <View style={styles.closeButton} />
+        </View>
 
-        {/* ── Loading overlay ── */}
-        {isLoading && !errorState && (
-          <View style={styles.loadingOverlay} pointerEvents="none">
-            {loadingComponent ?? (
-              <ActivityIndicator size="large" color="#0066FF" />
-            )}
-          </View>
-        )}
+        {/* ── WebView ── */}
+        <View style={styles.webViewContainer}>
+          <WebView
+            key={reloadKey}
+            ref={webViewRef}
+            source={{ uri: checkoutUrl }}
+            style={styles.webView}
+            javaScriptEnabled
+            domStorageEnabled
+            startInLoadingState={false}
+            onLoadStart={() => {
+              if (isActive()) setIsLoading(true);
+            }}
+            onLoadEnd={() => {
+              if (isActive()) setIsLoading(false);
+            }}
+            onError={handleError}
+            onHttpError={handleHttpError}
+            onShouldStartLoadWithRequest={onShouldStartLoadWithRequest}
+            onNavigationStateChange={onNavigationStateChange}
+            // Fix #14: restrict to HTTPS + about:blank — prevents intent:// and
+            // other dangerous scheme navigations in a payment context.
+            originWhitelist={['https://*', 'about:blank']}
+          />
 
-        {/* ── Error Recovery overlay ── */}
-        {errorState && (
-          <View style={styles.errorOverlay}>
-            {renderError ? (
-              renderError(errorState, handleRetry)
-            ) : (
-              <View style={styles.errorContainer}>
-                <Text style={styles.errorIcon}>⚠️</Text>
-                <Text style={styles.errorTitle}>Connection Error</Text>
-                <Text style={styles.errorMessage}>{errorState.message}</Text>
-                <TouchableOpacity
-                  style={styles.retryButton}
-                  onPress={handleRetry}
-                  accessibilityRole="button"
-                  accessibilityLabel="Retry loading checkout"
-                >
-                  <Text style={styles.retryButtonText}>Retry</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.cancelButton}
-                  onPress={handleCancellation}
-                  accessibilityRole="button"
-                  accessibilityLabel="Cancel checkout"
-                >
-                  <Text style={styles.cancelButtonText}>Cancel</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </View>
-        )}
-      </View>
-    </SafeAreaView>
+          {/* ── Loading overlay ── */}
+          {isLoading && !errorState && (
+            <View style={styles.loadingOverlay} pointerEvents="none">
+              {loadingComponent ?? (
+                <ActivityIndicator size="large" color="#0066FF" />
+              )}
+            </View>
+          )}
+
+          {/* ── Error Recovery overlay ── */}
+          {errorState && (
+            <View style={styles.errorOverlay}>
+              {renderError ? (
+                renderError(errorState, handleRetry)
+              ) : (
+                <View style={styles.errorContainer}>
+                  <Text style={styles.errorIcon}>⚠️</Text>
+                  <Text style={styles.errorTitle}>Connection Error</Text>
+                  <Text style={styles.errorMessage}>{errorState.message}</Text>
+                  <TouchableOpacity
+                    style={styles.retryButton}
+                    onPress={handleRetry}
+                    accessibilityRole="button"
+                    accessibilityLabel="Retry loading checkout"
+                  >
+                    <Text style={styles.retryButtonText}>Retry</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.cancelButton}
+                    onPress={handleCancellation}
+                    accessibilityRole="button"
+                    accessibilityLabel="Cancel checkout"
+                  >
+                    <Text style={styles.cancelButtonText}>Cancel</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          )}
+        </View>
+      </SafeAreaView>
+    </SafeAreaProvider>
   );
 }
 
 // ─── Styles ────────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
+  provider: {
+    flex: 1,
+  },
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
