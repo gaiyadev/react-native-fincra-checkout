@@ -16,6 +16,25 @@ jest.mock('react-native-webview', () => {
   };
 });
 
+// StatusBar keeps a module-level setImmediate handle (`_updateImmediate`) that it
+// clears/recreates on every mount and unmount. Across tests that switch between
+// fake and real timers, that shared handle crosses clocks, and on Node 18/20 it
+// hangs RNTL's afterEach cleanup ("Exceeded timeout ... for a hook").
+// Status bar styling is not under test, so render nothing.
+jest.mock('react-native/Libraries/Components/StatusBar/StatusBar', () => {
+  const StatusBarMock = () => null;
+  StatusBarMock.setBarStyle = jest.fn();
+  StatusBarMock.setBackgroundColor = jest.fn();
+  StatusBarMock.setHidden = jest.fn();
+  StatusBarMock.setTranslucent = jest.fn();
+  StatusBarMock.setNetworkActivityIndicatorVisible = jest.fn();
+  StatusBarMock.pushStackEntry = jest.fn();
+  StatusBarMock.popStackEntry = jest.fn();
+  StatusBarMock.replaceStackEntry = jest.fn();
+  StatusBarMock.currentHeight = 0;
+  return StatusBarMock;
+});
+
 jest.mock('react-native-safe-area-context', () => {
   const React = require('react');
   const { View } = require('react-native');
