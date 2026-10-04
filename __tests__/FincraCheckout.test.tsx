@@ -1,6 +1,6 @@
 import React from 'react';
 import { Modal } from 'react-native';
-import { render, screen, act } from '@testing-library/react-native';
+import { render, screen, act, cleanup } from '@testing-library/react-native';
 import {
   FincraCheckout,
   FincraCheckoutHostRegistrar,
@@ -25,6 +25,24 @@ describe('FincraCheckoutHost', () => {
     onFailed: jest.fn(),
     onCancelled: jest.fn(),
   };
+
+  // Warm-up: one full session (open → Android back → settled) through the
+  // public API. react-native lazily requires — and with a cold Jest cache, as
+  // on CI, Babel-transforms — Modal and the checkout's components on first
+  // render. That one-off cost (5s+ on CI) would otherwise land inside the
+  // first async test and trip its 5s timeout; beforeAll gets its own budget.
+  beforeAll(async () => {
+    render(<FincraCheckoutHostRegistrar />);
+    let session!: Promise<FincraCheckoutResult>;
+    await act(async () => {
+      session = FincraCheckout.openInline(inlineConfig);
+    });
+    await act(async () => {
+      screen.UNSAFE_getByType(Modal).props.onRequestClose();
+    });
+    await session;
+    cleanup();
+  }, 30000);
 
   beforeEach(() => {
     jest.clearAllMocks();
