@@ -65,7 +65,7 @@
     "@babel/preset-env": "^7.24.0",
     "@babel/preset-react": "^7.24.0",
     "@babel/preset-typescript": "^7.24.0",
-    "@react-native/babel-preset": "^0.73.0",
+    "@react-native/babel-preset": "^0.87.1",
     "@testing-library/react-native": "^12.4.5",
     "@types/jest": "^29.5.0",
     "@types/react": "^18.0.0",
@@ -77,11 +77,11 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-native": "^4.1.0",
     "jest": "^29.7.0",
-    "react": "18.2.0",
-    "react-native": "0.73.0",
+    "react": "18.3.1",
+    "react-native": "0.87.1",
     "react-native-safe-area-context": "^4.9.0",
     "react-native-webview": "^14.0.1",
-    "react-test-renderer": "18.2.0",
+    "react-test-renderer": "18.3.1",
     "typescript": "^5.4.0"
   },
   "jest": {
