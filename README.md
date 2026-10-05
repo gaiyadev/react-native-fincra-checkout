@@ -1,13 +1,17 @@
 # react-native-fincra-checkout
 
 <p align="center">
-  <img src="https://img.shields.io/npm/v/react-native-fincra-checkout?color=0066FF&style=flat-square" alt="npm version" />
+  <a href="https://www.npmjs.com/package/react-native-fincra-checkout"><img src="https://img.shields.io/npm/v/react-native-fincra-checkout?color=0066FF&style=flat-square" alt="npm version" /></a>
+  <a href="https://github.com/gaiyadev/react-native-fincra-checkout/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/gaiyadev/react-native-fincra-checkout/ci.yml?branch=main&style=flat-square&label=CI" alt="CI status" /></a>
   <img src="https://img.shields.io/badge/TypeScript-100%25-blue?style=flat-square" alt="TypeScript" />
-  <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="license" />
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="license" /></a>
   <img src="https://img.shields.io/badge/platform-iOS%20%7C%20Android-lightgrey?style=flat-square" alt="platforms" />
+  <a href="./CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs welcome" /></a>
 </p>
 
-A **production-ready**, **100% TypeScript** React Native SDK for [Fincra Checkout](https://fincra.com/checkout), with full feature and architectural parity with the official `flutter_fincra_checkout` package.
+A **production-ready**, **100% TypeScript** React Native SDK for [Fincra Checkout](https://fincra.com/checkout), with full feature and architectural parity with the `flutter_fincra_checkout` package.
+
+> **Community project.** This SDK is maintained by the community. It is **not affiliated with, endorsed by, or supported by Fincra**. "Fincra" is a trademark of its respective owner. For questions about the Fincra platform or API, contact Fincra. For issues with this SDK, [open an issue](https://github.com/gaiyadev/react-native-fincra-checkout/issues).
 
 ---
 
@@ -346,6 +350,15 @@ Tests cover `UrlHandler` (strict redirect matching, status extraction, reference
 
 ---
 
+## Contributing
+
+Contributions are welcome! Please read the [contributing guide](./CONTRIBUTING.md) for setup, tests and the PR process, and follow our [Code of Conduct](./CODE_OF_CONDUCT.md).
+
+- 🐛 **Bugs and feature requests:** [open an issue](https://github.com/gaiyadev/react-native-fincra-checkout/issues/new/choose)
+- 🔒 **Security vulnerabilities:** report privately, see [SECURITY.md](./SECURITY.md). Please don't open a public issue.
+
+---
+
 ## Changelog
 
 See [CHANGELOG.md](./CHANGELOG.md) for a list of release notes and changes.
@@ -354,4 +367,4 @@ See [CHANGELOG.md](./CHANGELOG.md) for a list of release notes and changes.
 
 ## License
 
-MIT © [Fincra](https://fincra.com)
+[MIT](./LICENSE) © Codeloom Technologies
