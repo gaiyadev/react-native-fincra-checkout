@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🔒 Report a security vulnerability
+    url: https://github.com/gaiyadev/react-native-fincra-checkout/security/advisories/new
+    about: Report vulnerabilities privately. Please don't open a public issue.
+  - name: 🏦 Fincra API or platform question
+    url: https://docs.fincra.com
+    about: Questions about the Fincra API, account or dashboard go to Fincra. This project is not affiliated with Fincra.

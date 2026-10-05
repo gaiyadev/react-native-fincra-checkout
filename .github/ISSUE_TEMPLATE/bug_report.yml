@@ -1,0 +1,90 @@
+name: Bug report
+description: Something in the SDK isn't working as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug! Please fill in as much as you can.
+
+        ⚠️ **Never paste API keys, secret keys, checkout links or customer data.** Use placeholders.
+        🔒 Security vulnerability? **Don't open an issue.** Use the repository's Security tab → "Report a vulnerability" (see SECURITY.md).
+        🏦 Problem with the Fincra API or platform itself? Contact Fincra. This project is not affiliated with Fincra.
+
+  - type: input
+    id: version
+    attributes:
+      label: SDK version
+      placeholder: e.g. 1.0.2
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Checkout mode
+      options:
+        - WebView (hosted checkout URL)
+        - Inline (JS SDK)
+        - Both / not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: api
+    attributes:
+      label: API used
+      options:
+        - Imperative (FincraCheckout.open* + FincraCheckoutHost)
+        - Declarative component (<FincraWebViewCheckout /> / <FincraInlineCheckout />)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      multiple: true
+      options:
+        - iOS
+        - Android
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: React Native / Expo, react-native-webview and react-native-safe-area-context versions, device or simulator, OS version.
+      placeholder: |
+        react-native: 0.76.0
+        expo: 52 (or bare RN)
+        react-native-webview: 13.12.0
+        react-native-safe-area-context: 4.12.0
+        Device: iPhone 16 Pro simulator, iOS 18
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: A minimal code sample or repo helps the most. Remove all keys.
+      render: tsx
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / result object
+      description: Console errors, or the result / error object you received (redact references if needed).
+      render: shell
